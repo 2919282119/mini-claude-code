@@ -93,7 +93,7 @@ miniCC/
 
 ```bash
 pip install openai python-dotenv tavily-python pyyaml
-# 在根目录 .env 中填入 LLM 服务商 Key/模型（当前代码读取 TP_* 前缀）与 TAVILY_API_KEY
+# 复制 .env.example 为 .env，填入 LLM 服务商 Key/模型（当前代码读取 TP_* 前缀）与 TAVILY_API_KEY
 python main.py
 ```
 
