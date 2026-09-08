@@ -1,0 +1,18 @@
+# 密钥与本地配置
+.env
+.claude/settings.local.json
+
+# IDE
+.idea/
+
+# Python
+__pycache__/
+*.pyc
+.venv/
+venv/
+
+# 调试/草稿文件（非正式测试）
+tests/filter.py
+tests/input.py
+tests/common_test.py
+tests/test_debugging.py
