@@ -2,15 +2,21 @@ import os
 from openai import OpenAI
 from dotenv import load_dotenv
 
+from llm.model import MODELS, ModelConfig
+
 load_dotenv()
-# TODO:我觉得这里写的太死了切换模型太麻烦了，而且也没有各个模型的配置比如上下文窗口
-client = OpenAI(
-    api_key=os.environ["TP_API_KEY"],
-    base_url=os.environ["TP_BASE_URL"],
-)
-def call_llm(messages, tools=None):
+
+def call_llm(
+        config:ModelConfig,
+        messages,
+        tools=None
+):
+    client = OpenAI(
+        api_key=os.environ[config.api_key_env],
+        base_url=os.environ[config.base_url_env],
+    )
     kwargs = {
-        "model": os.environ["TP_MODEL"],
+        "model": config.name,
         "messages": messages,
         "temperature": 1,
     }

@@ -2,9 +2,10 @@
 
 一个纯 Python 从零实现的 AI 编程助手（CLI），模仿 **Claude Code** 的核心工作方式：用户以自然语言下达编程任务，Agent 通过 **ReAct 循环**（Reason → Act → Observe）自主地读代码、改代码、跑命令、查资料，直到完成任务，并在写文件、执行命令等敏感操作前向用户请求授权。
 
-- 纯 Python 实现，无 Web 框架，核心代码约 1400 行
-- LLM 通过 OpenAI 兼容接口调用；API Key / BaseURL / 模型名经 `.env` 环境变量注入（当前代码固定读取 `TP_*` 前缀的一组变量）
-- 项目目录：`tools/`、`agent/`、`commands/`、`llm/` 四层解耦，各模块可独立替换
+- 纯 Python 实现，无 Web 框架，核心代码约 1600 行
+- LLM 通过 OpenAI 兼容接口调用；内置**多模型映射**（`llm/model.py`），每个模型绑定各自的 API Key / BaseURL 环境变量与上下文窗口，`/model` 可在运行时切换
+- 已打包为可安装 CLI（`pyproject.toml`）：`pip install -e .` 后，任意目录下执行 `miniCC` 即可启动
+- 项目目录：`tools/`、`agent/`、`commands/`、`llm/`、`cli/` 分层解耦，各模块可独立替换
 
 ## 核心功能
 
@@ -16,7 +17,8 @@
 | 权限检查 | 按 `READ / WRITE / EXECUTE` 分级：读操作自动放行，写/执行操作交互式询问（y / n / a）；选「记住（a）」后以 *工具名+参数* 为键，本进程内相同调用不再询问（允许与拒绝都会被记住，重启进程后清空） |
 | 会话管理 | 每次对话的完整状态封装为 `AgentState`（session_id / messages / cwd / name），每轮回答后序列化为 JSON 存到 `~/.miniCC/sessions/`；支持 `resume` 跨进程恢复任意历史会话继续对话 |
 | 上下文管理 | 从每次响应的 `usage.prompt_tokens` 直接读取真实 token 用量（非本地估算）；`/compact` 让 LLM 总结历史消息、保留最近 10 条，以 `[Conversation Summary]` 注入上下文；用量 ≥ 80% 时自动触发压缩 |
-| 斜杠命令 | `/help` `/clear` `/rename` `/resume` `/compact` `/btw` `/memory`，另有 `!` 前缀直通执行 Shell 命令 |
+| 多模型映射 | `llm/model.py` 维护模型注册表（当前 kimi / deepseek），每条配置声明「模型名 + API Key 环境变量名 + BaseURL 环境变量名 + 上下文窗口」；默认 kimi，`/model <name>` 运行时切换（连同上下文窗口一并更新，随会话持久化）；新增模型 = 加一条配置 + `.env` 补对应变量 |
+| 斜杠命令 | `/help` `/clear` `/rename` `/resume` `/compact` `/btw` `/memory` `/model`，另有 `!` 前缀直通执行 Shell 命令 |
 | 旁路问答 `/btw` | 用「系统提示 + 当前对话历史 + 新问题」临时组装请求问 LLM，结果直接展示而**不写入**对话历史，不污染主任务上下文 |
 | 跨会话长期记忆 | `~/.miniCC/memory.json` 持久化，`/memory` 支持增删查清；每次请求动态拼进 system prompt，让 Agent 在后续会话中记得用户偏好与约定 |
 | Skills 技能系统 | 以 Claude Code 的 `SKILL.md`（YAML frontmatter + Markdown）为规范，从全局目录 `~/.miniCC/skills/<name>/SKILL.md` 自动发现；采用**渐进式披露**——仅把「技能名 + 一句话描述」做成 `load_skill` 工具的 description 暴露给模型，由模型按需调用加载完整内容，避免上下文无谓膨胀 |
@@ -37,7 +39,8 @@ handle_command ── /命令 或 !命令 命中? ──yes──> 直接处理�
 agent_loop(state, registry, context_manager, memory_manager)        ◀── 注意这里
    │ 循环：                                                                传的是 messages 引用，
    │   组装请求 = system_prompt(+长期记忆) + 历史消息                    每一次更新都会
-   │   call_llm(messages, tools=registry.schemas())                    写回 AgentState
+   │   call_llm(model_config, messages, tools=registry.schemas())      写回 AgentState
+   │   （model_config = MODELS[state.model]，随 /model 切换）
    │   context_manager.update(response)  → 用量≥80% 自动 compact
    │   ↓ message.tool_calls?
    │   是 → registry 查工具 → check_permission → 执行 → 工具结果以
@@ -70,6 +73,7 @@ agent_loop(state, registry, context_manager, memory_manager)        ◀── �
 ```
 miniCC/
 ├── main.py                  # 应用入口：REPL、组件装配（注册表/会话/记忆/上下文）
+├── pyproject.toml           # 打包配置（entry point: miniCC = main:main）
 ├── agent/
 │   ├── agent.py             # ReAct 主循环
 │   ├── session.py           # AgentState + SessionManager（~/.miniCC/sessions/*.json）
@@ -77,8 +81,11 @@ miniCC/
 │   ├── memory.py            # MemoryManager：跨会话长期记忆（~/.miniCC/memory.json）
 │   ├── skill.py             # SkillManager：~/.miniCC/skills/<name>/SKILL.md 发现
 │   └── system_prompt.py     # Agent 行为准则
-├── commands/handle_command.py   # 斜杠命令 + ! Shell 直通 + /btw 旁路问答
-├── llm/call_llm.py          # OpenAI 兼容调用（env: TP_API_KEY / TP_BASE_URL / TP_MODEL）
+├── commands/handle_command.py   # 斜杠命令 + ! Shell 直通 + /model 切换 + /btw 旁路问答
+├── llm/
+│   ├── model.py             # 模型映射表（模型名 / API Key 与 BaseURL 的 env 变量名 / 上下文窗口）
+│   └── call_llm.py          # OpenAI 兼容调用（按 ModelConfig 读取对应环境变量）
+├── cli/banner.py            # 启动 Banner（Logo / 当前模型 / 工作目录）
 ├── tools/
 │   ├── Tool.py              # 声明式工具基类（自动生成 schema）
 │   ├── tool_registry.py     # 注册表
@@ -93,19 +100,25 @@ miniCC/
 
 ```bash
 pip install openai python-dotenv tavily-python pyyaml
-# 复制 .env.example 为 .env，填入 LLM 服务商 Key/模型（当前代码读取 TP_* 前缀）与 TAVILY_API_KEY
+# 复制 .env.example 为 .env，填入所用模型的 Key/BaseURL（KIMI_API_KEY / KIMI_BASE_URL 或 DEEPSEEK_*）与 TAVILY_API_KEY
+
+# 方式一：项目内直接运行
 python main.py
+
+# 方式二：安装为全局命令，任意目录下启动
+pip install -e .
+miniCC
 ```
 
 - 存储位置：会话 `~/.miniCC/sessions/`，长期记忆 `~/.miniCC/memory.json`，技能 `~/.miniCC/skills/<name>/SKILL.md`（frontmatter 写 `description`，正文写操作规范，写好后重启即被自动发现）
+- 模型切换：默认 `kimi`；`/model` 查看当前模型与可选列表，`/model deepseek` 切换（需在 `.env` 配好该模型的 `DEEPSEEK_API_KEY` / `DEEPSEEK_BASE_URL`）；在 `llm/model.py` 的 `MODELS` 中加一条配置即可接入新模型
 - 常用命令示例：`/resume`（列出历史会话并选择继续）、`/compact`（手动压缩上下文）、`/memory 用户偏好...`（记住约定）、`! pytest tests/`（直通跑命令）
 
 ## 技术栈
 
-Python 3.10+（dataclass / typing）、OpenAI Python SDK（function calling）、Tavily Search API、PyYAML、unittest；配置全部经 `.env` 注入，不硬编码密钥。
+Python 3.10+（dataclass / typing）、OpenAI Python SDK（function calling）、Tavily Search API、PyYAML、unittest；setuptools 打包（`pyproject.toml` → `miniCC` 命令）；配置全部经 `.env` 注入，不硬编码密钥。
 
 ## 后续规划
 
 - **patch editing**：参照 Claude Code，把 `edit_file` 从「单次定点替换」扩展为「一次提交多处替换」（行号 + 上下文定位），并引入编辑预览/失败回退等防护
-- **模型与服务商配置化**：`llm/call_llm.py` 当前固定读取一组 `TP_*` 环境变量（`.env` 中的 `KIMI_*` 等备选未启用），`ContextManager` 的上下文窗口（100 万 token）写死在 `main.py`——计划改为「模型 → 服务商/上下文窗口」的配置映射
 - **长期记忆按用户/会话隔离**：当前 `memory.json` 为单机全局文件，未区分用户维度

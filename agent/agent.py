@@ -7,6 +7,7 @@ from agent.memory import MemoryManager
 from agent.session import AgentState
 from agent.system_prompt import SYSTEM_PROMPT
 from llm.call_llm import call_llm
+from llm.model import MODELS
 from tools.permission import check_permission
 from tools.tool_registry import ToolRegistry
 
@@ -30,7 +31,9 @@ def agent_loop(state:AgentState,registry:ToolRegistry,context_manager:ContextMan
             system_prompt += "\n\n" + memory_prompt
 
         # 1. 调用 LLM
+        config=MODELS[state.model]
         response = call_llm(
+            config,
             # 这里做了一个修改，平时压缩或者追加都是修改的state.messages，然后call_llm的时候再在开头添加system_prompt，防止把system_prompt也给压缩了
             [
                 {

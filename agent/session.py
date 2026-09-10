@@ -2,6 +2,9 @@ from dataclasses import dataclass, asdict
 from pathlib import Path
 import json
 
+from llm.model import DEFAULT_MODEL
+
+
 @dataclass
 class AgentState:
     session_id: str
@@ -9,6 +12,7 @@ class AgentState:
     # cwd:current working directory
     cwd: str
     name: str | None = None
+    model:str=DEFAULT_MODEL
 
     def to_dict(self) -> dict:
         # asdict是把对象转化为字典
@@ -29,7 +33,8 @@ class AgentState:
             session_id=data["session_id"],
             messages=data["messages"],
             cwd=data["cwd"],
-            name=data["name"]
+            name=data["name"],
+            model=data["model"]
         )
 
 

@@ -1,5 +1,6 @@
 from agent.session import AgentState
 from llm.call_llm import call_llm
+from llm.model import MODELS
 
 
 class ContextManager:
@@ -54,8 +55,8 @@ class ContextManager:
             },
             *old_messages
         ]
-
-        response = call_llm(summary_messages)
+        model_config=MODELS[state.model]
+        response = call_llm(model_config,summary_messages)
 
         # 更新最近一次 LLM 请求的 token 使用量
         self.update(response)

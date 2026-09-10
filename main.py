@@ -6,7 +6,9 @@ from agent.context import ContextManager
 from agent.memory import MemoryManager
 from agent.session import AgentState, SessionManager
 from agent.system_prompt import SYSTEM_PROMPT
+from cli.banner import print_banner
 from commands.handle_command import handle_command
+from llm.model import MODELS, ModelConfig
 from tools.setup import tools_setup
 
 
@@ -25,8 +27,10 @@ def main():
 
     memory_manager = MemoryManager()
 
-    # TODO:这里先把context_window大小写死
-    context_manager = ContextManager(1000000)
+    model_config:ModelConfig=MODELS[state.model]
+    context_manager = ContextManager(model_config.context_window)
+
+    print_banner(model_config.name)
 
     while True:
         user_input = input("\n> ")

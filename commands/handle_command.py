@@ -4,6 +4,7 @@ from agent.context import ContextManager
 from agent.memory import MemoryManager
 from agent.session import SessionManager, AgentState
 from llm.call_llm import call_llm
+from llm.model import MODELS
 
 
 def handle_command(user_input,state:AgentState,session_manager:SessionManager,context_manager:ContextManager, memory_manager:MemoryManager):
@@ -27,16 +28,22 @@ def handle_slash_command(user_input,state:AgentState,session_manager:SessionMana
 
     if command == "/help":
         print("Available commands:")
-        print("/help")
-        print("/clear")
-        print("/resume")
-        print("/compact")
-        print("/rename")
-        print("/btw")
-        print("/memory")
-        print("/memory <content>")
-        print("/memory delete <id>")
-        print("/memory clear")
+        print()
+        print("  /help                 Show this help message")
+        print("  /clear                Clear the current conversation")
+        print("  /resume               Resume a previous session")
+        print("  /compact              Compact the conversation context")
+        print("  /rename <name>        Rename the current session")
+        print("  /btw <message>        Ask a quick question without changing context")
+        print("  /memory               Show saved long-term memories")
+        print("  /memory <content>     Save a new long-term memory")
+        print("  /memory delete <id>   Delete a saved memory")
+        print("  /memory clear         Clear all long-term memories")
+        print("  /model                Show the current model")
+        print("  /model <name>         Switch to another model")
+        print()
+        print("  ! <command>           Execute a shell command")
+
         return True
 
     if command == "/clear":
@@ -220,6 +227,36 @@ def handle_slash_command(user_input,state:AgentState,session_manager:SessionMana
 
         return True
 
+    if command=='/model':
+        if len(parts) == 1:
+            print(f"Current model: {state.model}")
+            print("Available models:")
+
+            for model_name in MODELS:
+                print(f"  {model_name}")
+
+            return True
+
+        model_name = parts[1]
+
+        if model_name not in MODELS:
+            print(f"Unknown model: {model_name}")
+            print("Available models:")
+
+            for name in MODELS:
+                print(f"  {name}")
+
+            return True
+
+        state.model = model_name
+
+        # 模型改变以后，上下文窗口也应该改变
+        context_manager.context_window = MODELS[model_name].context_window
+
+        print(f"Switched to {model_name}")
+
+        return True
+
     return False
 
 def handle_shell_command(user_input, state):
@@ -268,7 +305,7 @@ def btw(question, state):
             "content": question
         }
     ]
-
-    response = call_llm(messages)
+    model_config = MODELS[state.model]
+    response = call_llm(model_config,messages)
 
     return response.choices[0].message.content

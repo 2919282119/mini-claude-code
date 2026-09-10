@@ -1,0 +1,25 @@
+[build-system]
+requires = ["setuptools>=61"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "miniCC"
+version = "0.1.0"
+description = "A minimal Claude Code-like coding agent"
+requires-python = ">=3.10"
+
+[project.scripts]
+miniCC = "main:main"
+
+[tool.setuptools]
+py-modules = ["main"]
+
+[tool.setuptools.packages.find]
+where = ["."]
+include = [
+    "agent*",
+    "commands*",
+    "llm*",
+    "tools*",
+    "cli*"
+]
