@@ -79,9 +79,21 @@ def agent_loop(state:AgentState,registry:ToolRegistry,context_manager:ContextMan
 
             tool_name = tool_call.function.name
 
-            arguments = json.loads(
-                tool_call.function.arguments
-            )
+            # LLM 生成的参数不可信：JSON 解析失败同样不能崩掉 agent
+            try:
+                arguments = json.loads(
+                    tool_call.function.arguments
+                )
+            except json.JSONDecodeError as e:
+                messages.append({
+                    "role": "tool",
+                    "tool_call_id": tool_call.id,
+                    "content": json.dumps(
+                        {"error": f"工具参数 JSON 解析失败: {e}"},
+                        ensure_ascii=False
+                    )
+                })
+                continue
 
             print(f"🔧 调用工具: {tool_name}")
             print(f"📦 参数: {arguments}")
@@ -111,7 +123,12 @@ def agent_loop(state:AgentState,registry:ToolRegistry,context_manager:ContextMan
                 })
                 continue
 
-            result = tool.execute(**arguments)
+            # 参数错误或执行异常不应崩掉整个 agent，
+            # 而是作为工具结果返回，让 LLM 看到错误后自行纠正重试
+            try:
+                result = tool.execute(**arguments)
+            except Exception as e:
+                result = {"error": f"工具执行失败: {e}"}
 
             # 6. 把 Tool 执行结果返回给 LLM
             messages.append({

@@ -11,7 +11,7 @@
 
 | 能力 | 说明 |
 | --- | --- |
-| ReAct Agent 循环 | `agent_loop` 反复执行「组装上下文 → 调用 LLM → 若请求工具则执行并回填结果 → 再调用」，直到 LLM 给出最终答复；对话中每步都打印工具调用与参数，过程可观测；单轮任务最多循环 30 次（`MAX_LOOP_CNT`），超过即停止并提示，避免工具调用失控陷入无限循环 |
+| ReAct Agent 循环 | `agent_loop` 反复执行「组装上下文 → 调用 LLM → 若请求工具则执行并回填结果 → 再调用」，直到 LLM 给出最终答复；对话中每步都打印工具调用与参数，过程可观测；单轮任务最多循环 30 次（`MAX_LOOP_CNT`），超过即停止并提示，避免工具调用失控陷入无限循环；工具参数错误或执行异常**不会中断进程**，错误信息作为工具结果回填，由 LLM 自行纠正重试 |
 | 工具系统 | 8 个基础工具：`read_file` / `write_file` / `edit_file` / `grep` / `glob`（按通配符查找文件） / `bash` / `list_dir` / `search_web`（联网搜索），外加 `load_skill`，共 9 个；`bash` 支持 `background=true` 后台启动长期服务（如 dev server，stdin/out/err 全部隔离），前台命令 30s 超时后**杀整棵进程树**（防止孙进程持有管道导致永久卡死）；grep 自动跳过 `.git`/`node_modules` 等目录 |
 | 工具注册表 | `ToolRegistry`：声明式定义工具（名称/描述/参数/权限级），自动生成 OpenAI function-calling 的 JSON Schema |
 | 权限检查 | 按 `READ / WRITE / EXECUTE` 分级：读操作自动放行，写/执行操作交互式询问（y / n / a）；选「记住（a）」后以 *工具名* 为键，本进程内该工具后续调用不再询问（避免逐次确认过于频繁；允许与拒绝都会被记住，重启进程后清空） |
@@ -100,7 +100,8 @@ miniCC/
 └── tests/
     ├── test_permission.py   # unittest：权限放行/询问/拒绝（mock 用户输入）
     ├── test_resume.py       # 回归：/resume 与 compact 的 messages 引用稳定性
-    └── test_bash_timeout.py # 回归：前台超时杀进程树、后台 stdin 隔离
+    ├── test_bash_timeout.py # 回归：前台超时杀进程树、后台 stdin 隔离
+    └── test_agent_tool_errors.py # 回归：工具参数错误不崩溃，错误回填给 LLM
 ```
 
 ## 快速开始
