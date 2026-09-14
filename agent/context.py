@@ -64,13 +64,14 @@ class ContextManager:
         summary = response.choices[0].message.content
 
         # 用 summary + 最近消息替换旧上下文
-        state.messages = [
+        state.messages.clear()
+        state.messages.extend([
             {
                 "role": "user",
                 "content": f"[Conversation Summary]\n\n{summary}"
             },
             *recent_messages
-        ]
+        ])
 
         return True
 
@@ -78,3 +79,22 @@ class ContextManager:
         usage_ratio = self.usage_ratio
         if usage_ratio >= 0.8:
             self.compact(state)
+
+    def get_usage(self):
+        remaining = max(
+            self.context_window - self.used_tokens,
+            0
+        )
+
+        percentage = (
+            self.used_tokens / self.context_window * 100
+            if self.context_window
+            else 0
+        )
+
+        return {
+            "used": self.used_tokens,
+            "total": self.context_window,
+            "remaining": remaining,
+            "percentage": percentage,
+        }

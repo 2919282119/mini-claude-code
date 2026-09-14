@@ -1,3 +1,5 @@
+import shutil
+
 import yaml
 from pathlib import Path
 
@@ -8,7 +10,7 @@ class SkillManager:
         self.skills_dir.mkdir(parents=True, exist_ok=True)
 
         self.skills = {}
-
+        self.init_builtin_skills()
         self.discover()
 
     def discover(self):
@@ -81,3 +83,24 @@ class SkillManager:
             )
 
         return "\n".join(lines)
+
+    # 在用户安装miniCC时将内置skills安装到全局
+    def init_builtin_skills(self):
+        """初始化内置 Skill"""
+
+        builtin_skills_dir = Path(__file__).parent.parent / "skills"
+
+        if not builtin_skills_dir.exists():
+            return
+
+        for skill_dir in builtin_skills_dir.iterdir():
+            if not skill_dir.is_dir():
+                continue
+
+            target = self.skills_dir / skill_dir.name
+
+            # 用户已经安装过/修改过，就不要覆盖
+            if target.exists():
+                continue
+
+            shutil.copytree(skill_dir, target)

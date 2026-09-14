@@ -1,16 +1,11 @@
 import json
 
-# 记住的权限决定：key = "工具名:参数"，参数相同的调用不再询问
+# 修改，不再以工具名:参数为key，而是直接以函数名为key，避免权限询问太过于频繁
 _remembered = {}
-
-
-def _approval_key(tool_name, arguments):
-    return f"{tool_name}:{json.dumps(arguments, sort_keys=True, ensure_ascii=False)}"
-
 
 def _request_approval(tool, arguments):
     """WRITE/EXECUTE 工具需要用户确认。返回 True=允许，False=拒绝。"""
-    key = _approval_key(tool.name, arguments)
+    key = tool.name
 
     if key in _remembered:
         return _remembered[key]

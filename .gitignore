@@ -12,6 +12,8 @@ __pycache__/
 venv/
 
 *.egg-info/
+build/
+dist/
 
 # 调试/草稿文件（非正式测试）
 tests/filter.py

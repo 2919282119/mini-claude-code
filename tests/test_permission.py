@@ -2,7 +2,7 @@ import unittest
 from unittest import mock
 
 from tools.Tool import Tool
-from tools import check_permission, clear_remembered
+from tools.permission import check_permission, clear_remembered
 from tools.setup import tools_setup
 
 
@@ -11,9 +11,9 @@ class TestPermission(unittest.TestCase):
     def setUp(self):
         clear_remembered()
 
-    def make_tool(self, permission_level):
+    def make_tool(self, permission_level, name="t"):
         return Tool(
-            name="t",
+            name=name,
             description="d",
             parameters={},
             function=lambda: "ok",
@@ -40,12 +40,19 @@ class TestPermission(unittest.TestCase):
         with mock.patch("builtins.input", return_value="n"):
             self.assertTrue(check_permission(tool, args))
 
-    def test_different_args_not_remembered(self):
-        tool = self.make_tool("EXECUTE")
+    def test_remember_is_per_tool(self):
+        # 记忆以工具名为粒度：同一工具记住后不再询问（参数无关），另一工具仍需询问
+        tool_a = self.make_tool("EXECUTE", name="a")
+        tool_b = self.make_tool("EXECUTE", name="b")
+
         with mock.patch("builtins.input", return_value="a"):
-            self.assertTrue(check_permission(tool, {"command": "ls"}))
+            self.assertTrue(check_permission(tool_a, {"command": "ls"}))
+
         with mock.patch("builtins.input", return_value="n"):
-            self.assertFalse(check_permission(tool, {"command": "rm -rf /"}))
+            self.assertTrue(check_permission(tool_a, {"command": "rm -rf /"}))
+
+        with mock.patch("builtins.input", return_value="n"):
+            self.assertFalse(check_permission(tool_b, {"command": "ls"}))
 
 
 class TestToolPermissionLevels(unittest.TestCase):

@@ -1,4 +1,5 @@
 from tools.load_skill import load_skill_tool
+from tools.my_tools.basic.glob import glob_tool
 from tools.my_tools.usual.search_web import search_tool
 from tools.my_tools.basic.bash import bash_tool
 from tools.my_tools.basic.edit_file import edit_file_tool
@@ -15,6 +16,7 @@ def tools_setup():
     registry.register(bash_tool)
     registry.register(edit_file_tool)
     registry.register(grep_tool)
+    registry.register(glob_tool)
     registry.register(list_dir_tool)
     registry.register(read_file_tool)
     registry.register(write_file_tool)

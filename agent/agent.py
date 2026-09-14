@@ -5,7 +5,7 @@ from pyexpat.errors import messages
 from agent.context import ContextManager
 from agent.memory import MemoryManager
 from agent.session import AgentState
-from agent.system_prompt import SYSTEM_PROMPT
+from agent.system_prompt import SYSTEM_PROMPT, load_cc_md
 from llm.call_llm import call_llm
 from llm.model import MODELS
 from tools.permission import check_permission
@@ -16,17 +16,30 @@ load_dotenv()
 # ========================
 # Agent Loop
 # ========================
+MAX_LOOP_CNT=30
+
 def agent_loop(state:AgentState,registry:ToolRegistry,context_manager:ContextManager,memory_manager:MemoryManager):
     # 这里传的是局部引用，后面修改没问题
     messages=state.messages
     # 这里llm要的tools列表是schema（dict）
     tools=registry.schemas()
+
+    # 设置最大循环次数，避免无限循环
+    loop_cnt=0
     while True:
+        loop_cnt += 1
+        if loop_cnt > MAX_LOOP_CNT:
+            print("Max loop count reached")
+            break
+        # 每次请求动态构造 system prompt
+        system_prompt = SYSTEM_PROMPT
+
+        # 加载CC.md（全局+本项目）
+        cc_prompt=load_cc_md()
+        system_prompt+=cc_prompt
 
         # 加载memory
         memory_prompt = memory_manager.format_for_prompt()
-        # 每次请求动态构造 system prompt
-        system_prompt = SYSTEM_PROMPT
         if memory_prompt:
             system_prompt += "\n\n" + memory_prompt
 

@@ -5,6 +5,7 @@ from agent.memory import MemoryManager
 from agent.session import SessionManager, AgentState
 from llm.call_llm import call_llm
 from llm.model import MODELS
+from tools.load_skill import skill_manager
 
 
 def handle_command(user_input,state:AgentState,session_manager:SessionManager,context_manager:ContextManager, memory_manager:MemoryManager):
@@ -32,6 +33,7 @@ def handle_slash_command(user_input,state:AgentState,session_manager:SessionMana
         print("  /help                 Show this help message")
         print("  /clear                Clear the current conversation")
         print("  /resume               Resume a previous session")
+        print("  /context              Show the context usage")
         print("  /compact              Compact the conversation context")
         print("  /rename <name>        Rename the current session")
         print("  /btw <message>        Ask a quick question without changing context")
@@ -41,6 +43,7 @@ def handle_slash_command(user_input,state:AgentState,session_manager:SessionMana
         print("  /memory clear         Clear all long-term memories")
         print("  /model                Show the current model")
         print("  /model <name>         Switch to another model")
+        print("  /skills               Show installed skills")
         print()
         print("  ! <command>           Execute a shell command")
 
@@ -132,7 +135,12 @@ def handle_slash_command(user_input,state:AgentState,session_manager:SessionMana
         # 更新当前 state
         state.session_id = new_state.session_id
         state.name = new_state.name
-        state.messages = new_state.messages
+        # TODO:这种写法有问题，直接把messages的引用给改掉了导致user_prompt加不进去
+        # state.messages = new_state.messages
+
+        state.messages.clear()
+        state.messages.extend(new_state.messages)
+
         state.cwd = new_state.cwd
 
         print(f"Resumed session: {state.name}")
@@ -256,6 +264,38 @@ def handle_slash_command(user_input,state:AgentState,session_manager:SessionMana
         print(f"Switched to {model_name}")
 
         return True
+
+    if command == "/context":
+        usage = context_manager.get_usage()
+
+        print("Context Usage")
+        print("────────────────────────")
+        print(f"Context Window: {usage['total']:,} tokens")
+        print(f"Used:           {usage['used']:,} tokens")
+        print(f"Remaining:      {usage['remaining']:,} tokens")
+        print(f"Usage:          {usage['percentage']:.1f}%")
+
+        return True
+
+    if command == "/skills":
+        # TODO:最好在安装完或者手动移入skill之后就能更新skills
+        skill_manager.discover()
+        skills = skill_manager.skills
+
+        if not skills:
+            print("No skills installed.")
+            return True
+
+        print("Installed skills:")
+        for name, skill in skills.items():
+            description = skill.get("description", "")
+            if description:
+                print(f"- {name}: {description}")
+            else:
+                print(f"- {name}")
+
+        return True
+
 
     return False
 

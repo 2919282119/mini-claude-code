@@ -1,3 +1,5 @@
+from pathlib import Path
+
 SYSTEM_PROMPT = """
 你是一个 Coding Agent。
 你的任务是帮助用户分析、修改、运行和调试代码。
@@ -52,3 +54,27 @@ SYSTEM_PROMPT = """
    - 简洁总结完成了什么，以及重要的修改或结果。
    - 如果任务没有完成，明确说明原因和当前进度。
 """
+
+
+def load_cc_md():
+    contents = []
+
+    # 1. 全局 CC.md
+    global_file = Path.home() / ".miniCC" / "CC.md"
+
+    if global_file.exists():
+        contents.append(
+            "# Global Instructions\n"
+            + global_file.read_text(encoding="utf-8")
+        )
+
+    # 2. 当前项目 CC.md
+    project_file = Path.cwd() / "CC.md"
+
+    if project_file.exists():
+        contents.append(
+            "# Project Instructions\n"
+            + project_file.read_text(encoding="utf-8")
+        )
+
+    return "\n\n".join(contents)
