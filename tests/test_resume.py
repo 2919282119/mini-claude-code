@@ -60,6 +60,31 @@ class TestResumeKeepsMessagesRef(unittest.TestCase):
         )
 
 
+class TestListSessionsNameFallback(unittest.TestCase):
+    """回归：旧会话 name 为 null 时列表应回退显示 Unnamed 而不是 None"""
+
+    def setUp(self):
+        self._tmp = tempfile.TemporaryDirectory()
+        self.session_manager = SessionManager()
+        self.session_manager.session_dir = Path(self._tmp.name)
+
+    def tearDown(self):
+        self._tmp.cleanup()
+
+    def test_none_name_falls_back_to_unnamed(self):
+        self.session_manager.save(
+            AgentState(
+                session_id="old-session",
+                messages=[],
+                cwd=str(Path.cwd()),
+                name=None,
+            )
+        )
+
+        sessions = self.session_manager.list_sessions()
+        self.assertEqual(sessions[0]["name"], "Unnamed")
+
+
 class TestCompactKeepsMessagesRef(unittest.TestCase):
     """回归：compact 重绑定 state.messages 会导致 agent loop 里的引用分叉"""
 

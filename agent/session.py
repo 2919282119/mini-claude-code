@@ -80,7 +80,8 @@ class SessionManager:
 
                 sessions.append({
                     "session_id": data["session_id"],
-                    "name": data.get("name", "Unnamed"),
+                    # get 的默认值只在 key 不存在时生效，name 为 null 的旧会话要回退
+                    "name": data.get("name") or "Unnamed",
                     "cwd": data.get("cwd", ""),
                     "updated_at": path.stat().st_mtime,
                     "size": path.stat().st_size,

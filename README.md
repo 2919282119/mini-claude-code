@@ -2,7 +2,7 @@
 
 一个纯 Python 从零实现的 AI 编程助手（CLI），模仿 **Claude Code** 的核心工作方式：用户以自然语言下达编程任务，Agent 通过 **ReAct 循环**（Reason → Act → Observe）自主地读代码、改代码、跑命令、查资料，直到完成任务，并在写文件、执行命令等敏感操作前向用户请求授权。
 
-- 纯 Python 实现，无 Web 框架，核心代码约 1900 行
+- 纯 Python 实现，无 Web 框架，核心代码约 2000 行
 - LLM 通过 OpenAI 兼容接口调用；内置**多模型映射**（`llm/model.py`），每个模型绑定各自的 API Key / BaseURL 环境变量与上下文窗口，`/model` 可在运行时切换
 - 已打包为可安装 CLI（`pyproject.toml`）：`pip install -e .` 后，任意目录下执行 `miniCC` 即可启动
 - 项目目录：`tools/`、`agent/`、`commands/`、`llm/`、`cli/` 分层解耦，各模块可独立替换
@@ -12,10 +12,10 @@
 | 能力 | 说明 |
 | --- | --- |
 | ReAct Agent 循环 | `agent_loop` 反复执行「组装上下文 → 调用 LLM → 若请求工具则执行并回填结果 → 再调用」，直到 LLM 给出最终答复；对话中每步都打印工具调用与参数，过程可观测；单轮任务最多循环 30 次（`MAX_LOOP_CNT`），超过即停止并提示，避免工具调用失控陷入无限循环 |
-| 工具系统 | 8 个基础工具：`read_file` / `write_file` / `edit_file` / `grep` / `glob`（按通配符查找文件） / `bash` / `list_dir` / `search_web`（联网搜索），外加 `load_skill`，共 9 个；bash 带 30s 超时，grep 自动跳过 `.git`/`node_modules` 等目录 |
+| 工具系统 | 8 个基础工具：`read_file` / `write_file` / `edit_file` / `grep` / `glob`（按通配符查找文件） / `bash` / `list_dir` / `search_web`（联网搜索），外加 `load_skill`，共 9 个；`bash` 支持 `background=true` 后台启动长期服务（如 dev server，stdin/out/err 全部隔离），前台命令 30s 超时后**杀整棵进程树**（防止孙进程持有管道导致永久卡死）；grep 自动跳过 `.git`/`node_modules` 等目录 |
 | 工具注册表 | `ToolRegistry`：声明式定义工具（名称/描述/参数/权限级），自动生成 OpenAI function-calling 的 JSON Schema |
 | 权限检查 | 按 `READ / WRITE / EXECUTE` 分级：读操作自动放行，写/执行操作交互式询问（y / n / a）；选「记住（a）」后以 *工具名* 为键，本进程内该工具后续调用不再询问（避免逐次确认过于频繁；允许与拒绝都会被记住，重启进程后清空） |
-| 会话管理 | 每次对话的完整状态封装为 `AgentState`（session_id / messages / cwd / name），每轮回答后序列化为 JSON 存到 `~/.miniCC/sessions/`；支持 `resume` 跨进程恢复任意历史会话继续对话 |
+| 会话管理 | 每次对话的完整状态封装为 `AgentState`（session_id / messages / cwd / name / model），每轮回答后序列化为 JSON 存到 `~/.miniCC/sessions/`；新会话自动以首条输入前 50 字符命名，`/resume` 列表因此显示有意义的名称而非 None；支持 `resume` 跨进程恢复任意历史会话继续对话（连同模型选择一并恢复） |
 | 上下文管理 | 从每次响应的 `usage.prompt_tokens` 直接读取真实 token 用量（非本地估算）；`/context` 查看上下文窗口占用（已用 / 剩余 / 百分比）；`/compact` 让 LLM 总结历史消息、保留最近 10 条，以 `[Conversation Summary]` 注入上下文；用量 ≥ 80% 时自动触发压缩 |
 | 多模型映射 | `llm/model.py` 维护模型注册表（当前 kimi / deepseek），每条配置声明「模型名 + API Key 环境变量名 + BaseURL 环境变量名 + 上下文窗口」；默认 kimi，`/model <name>` 运行时切换（连同上下文窗口一并更新，随会话持久化）；新增模型 = 加一条配置 + `.env` 补对应变量 |
 | 斜杠命令 | `/help` `/clear` `/rename` `/resume` `/context` `/compact` `/btw` `/memory` `/model` `/skills`，另有 `!` 前缀直通执行 Shell 命令 |
@@ -99,7 +99,8 @@ miniCC/
 │   └── my_tools/            # basic: bash/grep/glob/ls/read/write/edit   usual: search_web
 └── tests/
     ├── test_permission.py   # unittest：权限放行/询问/拒绝（mock 用户输入）
-    └── test_resume.py       # 回归：/resume 与 compact 的 messages 引用稳定性
+    ├── test_resume.py       # 回归：/resume 与 compact 的 messages 引用稳定性
+    └── test_bash_timeout.py # 回归：前台超时杀进程树、后台 stdin 隔离
 ```
 
 ## 快速开始

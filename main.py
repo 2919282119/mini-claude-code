@@ -41,7 +41,11 @@ def main():
         if handle_command(user_input, state,session_manager,context_manager,memory_manager):
             continue
 
-        messages.append({
+        # 这里应该判断state.name是不是None，如果是，就state.name=user_input
+        if state.name==None:
+            state.name=user_input[:50] # 前50个字符
+
+        state.messages.append({
             "role": "user",
             "content": user_input
         })
@@ -51,7 +55,6 @@ def main():
         print("\n🤖", answer)
 
         # 这里保存state到文件
-
         session_manager.save(state)
 
 if __name__ == "__main__":

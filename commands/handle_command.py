@@ -142,6 +142,7 @@ def handle_slash_command(user_input,state:AgentState,session_manager:SessionMana
         state.messages.extend(new_state.messages)
 
         state.cwd = new_state.cwd
+        state.model=new_state.model
 
         print(f"Resumed session: {state.name}")
         print(f"Project: {state.cwd}")
