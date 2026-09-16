@@ -1,3 +1,5 @@
+import os
+
 from tools.Tool import Tool
 
 
@@ -5,6 +7,7 @@ def edit_file(path, old_text, new_text):
     """
     将文件中的 old_text 精确替换为 new_text。
     """
+    path = os.path.expanduser(path)
 
     try:
         with open(path, "r", encoding="utf-8") as f:

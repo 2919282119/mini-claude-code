@@ -38,7 +38,10 @@ class TestToolErrorHandling(unittest.TestCase):
     """回归：LLM 生成的工具参数出错时不能崩掉整个 agent"""
 
     def setUp(self):
-        self.registry = tools_setup()
+        # 测试只关心本地工具；不连接真实的 MCP 服务器（隔离用户配置）
+        with mock.patch("tools.setup.load_mcp_tools", return_value=[]):
+            self.registry = tools_setup()
+
         self.context_manager = mock.MagicMock()
         self.memory_manager = mock.MagicMock()
         self.memory_manager.format_for_prompt.return_value = ""

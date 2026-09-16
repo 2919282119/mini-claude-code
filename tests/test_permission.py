@@ -58,7 +58,10 @@ class TestPermission(unittest.TestCase):
 class TestToolPermissionLevels(unittest.TestCase):
 
     def test_dangerous_tools_marked(self):
-        registry = tools_setup()
+        # 只检查本地工具；不连接真实的 MCP 服务器（隔离用户配置）
+        with mock.patch("tools.setup.load_mcp_tools", return_value=[]):
+            registry = tools_setup()
+
         levels = {t.name: t.permission_level for t in registry.all()}
 
         self.assertEqual(levels["bash"], "EXECUTE")

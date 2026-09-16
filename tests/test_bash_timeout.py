@@ -2,7 +2,7 @@ import subprocess
 import unittest
 from unittest import mock
 
-from tools.my_tools.basic.bash import bash
+from tools.local.builtin.bash import bash
 
 
 class TestBashTimeout(unittest.TestCase):
@@ -10,9 +10,9 @@ class TestBashTimeout(unittest.TestCase):
     def test_timeout_kills_process_tree_and_returns(self):
         """回归：前台命令超时后必须杀整棵进程树并返回，而不是卡死"""
         with mock.patch(
-            "tools.my_tools.basic.bash.subprocess.Popen"
+            "tools.local.builtin.bash.subprocess.Popen"
         ) as mock_popen, mock.patch(
-            "tools.my_tools.basic.bash.subprocess.run"
+            "tools.local.builtin.bash.subprocess.run"
         ) as mock_run:
             proc = mock_popen.return_value
             proc.pid = 4321
@@ -34,7 +34,7 @@ class TestBashTimeout(unittest.TestCase):
 
     def test_normal_command_returns_output(self):
         with mock.patch(
-            "tools.my_tools.basic.bash.subprocess.Popen"
+            "tools.local.builtin.bash.subprocess.Popen"
         ) as mock_popen:
             proc = mock_popen.return_value
             proc.communicate.return_value = ("hello\n", "")
@@ -48,7 +48,7 @@ class TestBashTimeout(unittest.TestCase):
     def test_background_detaches_stdin(self):
         """后台命令不应继承控制台输入"""
         with mock.patch(
-            "tools.my_tools.basic.bash.subprocess.Popen"
+            "tools.local.builtin.bash.subprocess.Popen"
         ) as mock_popen:
             mock_popen.return_value.pid = 99
 

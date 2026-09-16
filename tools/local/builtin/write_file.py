@@ -7,6 +7,8 @@ def write_file(path, content):
     """
     创建或覆盖文件。
     """
+    path = os.path.expanduser(path)
+
     try:
         # 如果父目录不存在，则创建
         parent = os.path.dirname(path)

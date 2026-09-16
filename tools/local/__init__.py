@@ -1,0 +1,1 @@
+# local里面的tool都是miniCC内置的，不需要用户扩展，用户可以通过skill或者MCP来扩展功能

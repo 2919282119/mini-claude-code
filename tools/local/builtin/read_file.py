@@ -1,3 +1,5 @@
+import os
+
 from tools.Tool import Tool
 
 
@@ -5,6 +7,8 @@ def read_file(path):
     """
     读取文件内容。
     """
+    path = os.path.expanduser(path)
+
     try:
         with open(path, "r", encoding="utf-8") as f:
             return f.read()

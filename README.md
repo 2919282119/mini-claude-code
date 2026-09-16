@@ -2,7 +2,7 @@
 
 一个纯 Python 从零实现的 AI 编程助手（CLI），模仿 **Claude Code** 的核心工作方式：用户以自然语言下达编程任务，Agent 通过 **ReAct 循环**（Reason → Act → Observe）自主地读代码、改代码、跑命令、查资料，直到完成任务，并在写文件、执行命令等敏感操作前向用户请求授权。
 
-- 纯 Python 实现，无 Web 框架，核心代码约 2000 行
+- 纯 Python 实现，无 Web 框架，核心代码约 2900 行
 - LLM 通过 OpenAI 兼容接口调用；内置**多模型映射**（`llm/model.py`），每个模型绑定各自的 API Key / BaseURL 环境变量与上下文窗口，`/model` 可在运行时切换
 - 已打包为可安装 CLI（`pyproject.toml`）：`pip install -e .` 后，任意目录下执行 `miniCC` 即可启动
 - 项目目录：`tools/`、`agent/`、`commands/`、`llm/`、`cli/` 分层解耦，各模块可独立替换
@@ -14,11 +14,12 @@
 | ReAct Agent 循环 | `agent_loop` 反复执行「组装上下文 → 调用 LLM → 若请求工具则执行并回填结果 → 再调用」，直到 LLM 给出最终答复；对话中每步都打印工具调用与参数，过程可观测；单轮任务最多循环 30 次（`MAX_LOOP_CNT`），超过即停止并提示，避免工具调用失控陷入无限循环；工具参数错误或执行异常**不会中断进程**，错误信息作为工具结果回填，由 LLM 自行纠正重试 |
 | 工具系统 | 8 个基础工具：`read_file` / `write_file` / `edit_file` / `grep` / `glob`（按通配符查找文件） / `bash` / `list_dir` / `search_web`（联网搜索），外加 `load_skill`，共 9 个；`bash` 支持 `background=true` 后台启动长期服务（如 dev server，stdin/out/err 全部隔离），前台命令 30s 超时后**杀整棵进程树**（防止孙进程持有管道导致永久卡死）；grep 自动跳过 `.git`/`node_modules` 等目录 |
 | 工具注册表 | `ToolRegistry`：声明式定义工具（名称/描述/参数/权限级），自动生成 OpenAI function-calling 的 JSON Schema |
+| MCP 工具接入 | 基于**官方 mcp SDK**（同步接口封装 async SDK：后台线程 + asyncio 事件循环桥接）。支持两种传输：**Streamable HTTP**（远程 URL）与 **stdio**（本地子进程，如 `uvx`）。配置在 `~/.miniCC/mcp.json`，用斜杠命令管理：`/mcp`（列表）、`/mcp add <name> <url>`、`/mcp add <name> -- <命令>`、`/mcp remove <name>`——由程序确定性合并配置，不会覆盖丢失已有条目。启动时完成握手与 `tools/list`，把远端工具包装成普通 `Tool` 注册进同一注册表——对 agent 完全透明。工具名带 `服务器__工具` 前缀防冲突，权限默认 `EXECUTE`（首次调用需确认），调用失败/超时返回错误不阻塞；单服务器连接失败只警告跳过；stdio 子进程退出时统一清理 |
 | 权限检查 | 按 `READ / WRITE / EXECUTE` 分级：读操作自动放行，写/执行操作交互式询问（y / n / a）；选「记住（a）」后以 *工具名* 为键，本进程内该工具后续调用不再询问（避免逐次确认过于频繁；允许与拒绝都会被记住，重启进程后清空） |
 | 会话管理 | 每次对话的完整状态封装为 `AgentState`（session_id / messages / cwd / name / model），每轮回答后序列化为 JSON 存到 `~/.miniCC/sessions/`；新会话自动以首条输入前 50 字符命名，`/resume` 列表因此显示有意义的名称而非 None；支持 `resume` 跨进程恢复任意历史会话继续对话（连同模型选择一并恢复） |
 | 上下文管理 | 从每次响应的 `usage.prompt_tokens` 直接读取真实 token 用量（非本地估算）；`/context` 查看上下文窗口占用（已用 / 剩余 / 百分比）；`/compact` 让 LLM 总结历史消息、保留最近 10 条，以 `[Conversation Summary]` 注入上下文；用量 ≥ 80% 时自动触发压缩 |
 | 多模型映射 | `llm/model.py` 维护模型注册表（当前 kimi / deepseek），每条配置声明「模型名 + API Key 环境变量名 + BaseURL 环境变量名 + 上下文窗口」；默认 kimi，`/model <name>` 运行时切换（连同上下文窗口一并更新，随会话持久化）；新增模型 = 加一条配置 + `.env` 补对应变量 |
-| 斜杠命令 | `/help` `/clear` `/rename` `/resume` `/context` `/compact` `/btw` `/memory` `/model` `/skills`，另有 `!` 前缀直通执行 Shell 命令 |
+| 斜杠命令 | `/help` `/clear` `/rename` `/resume` `/context` `/compact` `/btw` `/memory` `/model` `/skills` `/mcp`，另有 `!` 前缀直通执行 Shell 命令 |
 | 旁路问答 `/btw` | 用「系统提示 + 当前对话历史 + 新问题」临时组装请求问 LLM，结果直接展示而**不写入**对话历史，不污染主任务上下文 |
 | 跨会话长期记忆 | `~/.miniCC/memory.json` 持久化，`/memory` 支持增删查清；每次请求动态拼进 system prompt，让 Agent 在后续会话中记得用户偏好与约定 |
 | 项目指令文件 CC.md | 两级指令加载：全局 `~/.miniCC/CC.md` + 当前项目 `./CC.md`，每次请求动态读取追加到系统提示词（分别标注 `# Global Instructions` / `# Project Instructions`），用于固化跨项目的个人偏好与项目级约定（相当于 Claude Code 的 CLAUDE.md） |
@@ -55,7 +56,7 @@ agent_loop(state, registry, context_manager, memory_manager)        ◀── �
 
 | 模块 | 职责 | 关键设计 |
 | --- | --- | --- |
-| `tools/` | 工具层 | `Tool` 声明式定义 + `tool_registry` 注册表 + `permission` 权限检查；新工具 = 写一个函数 + 一个 `Tool(...)` 声明并注册，无需改动 agent 主循环 |
+| `tools/` | 工具层 | `Tool` 声明式定义 + `tool_registry` 注册表 + `permission` 权限检查；`local/`（本地实现）与 `mcp/`（MCP 接入，含远程 HTTP 与本地 stdio 两种传输）最终都包装成 `Tool` 注册进同一注册表——新增工具 = 一个 `Tool(...)` 声明，无需改动 agent 主循环 |
 | `agent/` | 智能体层 | `agent.py` 主循环（含 30 次循环上限）；`session.py` AgentState 会话状态与持久化；`context.py` token 用量跟踪与上下文压缩；`memory.py` 跨会话长期记忆；`skill.py` SKILL.md 发现与内置技能安装；`system_prompt.py` 行为约束（先理解再修改 / 优先获取真实信息 / 控制工具调用等中文工作准则）+ CC.md（全局/项目级）加载 |
 | `commands/` | 命令层 | 斜杠命令与 `!` Shell 直通，与正常对话分流 |
 | `llm/` | LLM 客户端 | OpenAI 兼容 SDK 封装，`tools` 参数可选传递 |
@@ -83,7 +84,7 @@ miniCC/
 │   ├── memory.py            # MemoryManager：跨会话长期记忆（~/.miniCC/memory.json）
 │   ├── skill.py             # SkillManager：技能发现 + 内置技能安装到全局
 │   └── system_prompt.py     # Agent 行为准则 + CC.md（全局/项目级）加载
-├── commands/handle_command.py   # 斜杠命令 + ! Shell 直通 + /model 切换 + /btw 旁路问答
+├── commands/handle_command.py   # 斜杠命令 + ! Shell 直通 + /model 切换 + /mcp 管理 + /btw 旁路问答
 ├── llm/
 │   ├── model.py             # 模型映射表（模型名 / API Key 与 BaseURL 的 env 变量名 / 上下文窗口）
 │   └── call_llm.py          # OpenAI 兼容调用（按 ModelConfig 读取对应环境变量）
@@ -94,20 +95,28 @@ miniCC/
 │   ├── Tool.py              # 声明式工具基类（自动生成 schema）
 │   ├── tool_registry.py     # 注册表
 │   ├── permission.py        # READ/WRITE/EXECUTE 分级 + 记住授权
-│   ├── setup.py             # 工具装配
-│   ├── load_skill.py        # skill 加载工具（描述中内嵌技能目录）
-│   └── my_tools/            # basic: bash/grep/glob/ls/read/write/edit   usual: search_web
+│   ├── setup.py             # 工具装配（本地工具 + MCP 工具）
+│   ├── local/               # 本地工具实现
+│   │   ├── builtin/         #   bash / grep / glob / ls / read / write / edit
+│   │   └── usual/           #   search_web / load_skill
+│   └── mcp/                 # MCP 接入（基于官方 mcp SDK）
+│       ├── config.py        #   ~/.miniCC/mcp.json 读写
+│       ├── client.py        #   SDK 封装（后台线程 + asyncio 事件循环桥接）
+│       └── manager.py       #   按配置创建客户端、包装成 Tool、退出清理
 └── tests/
     ├── test_permission.py   # unittest：权限放行/询问/拒绝（mock 用户输入）
     ├── test_resume.py       # 回归：/resume 与 compact 的 messages 引用稳定性
     ├── test_bash_timeout.py # 回归：前台超时杀进程树、后台 stdin 隔离
-    └── test_agent_tool_errors.py # 回归：工具参数错误不崩溃，错误回填给 LLM
+    ├── test_agent_tool_errors.py # 回归：工具参数错误不崩溃，错误回填给 LLM
+    ├── test_file_tools.py   # 回归：文件工具的 ~ 路径展开
+    ├── test_mcp.py          # unittest：SDK 类型转换、工具包装、失败跳过、配置读取
+    └── test_mcp_commands.py # unittest：/mcp 增删查（确定性合并，不丢已有配置）
 ```
 
 ## 快速开始
 
 ```bash
-pip install openai python-dotenv tavily-python pyyaml
+pip install openai python-dotenv tavily-python pyyaml mcp
 # 复制 .env.example 为 .env，填入所用模型的 Key/BaseURL（KIMI_API_KEY / KIMI_BASE_URL 或 DEEPSEEK_*）与 TAVILY_API_KEY
 
 # 方式一：项目内直接运行
@@ -119,15 +128,17 @@ miniCC
 ```
 
 - 存储位置：会话 `~/.miniCC/sessions/`，长期记忆 `~/.miniCC/memory.json`，技能 `~/.miniCC/skills/<name>/SKILL.md`（frontmatter 写 `description`，正文写操作规范；手动放入的技能用 `/skills` 刷新即可发现，无需重启）。仓库自带的内置技能（如 `find-skills`）在首次启动时自动复制到该目录，已存在则不覆盖
+- MCP 日志：stdio 服务器自身的日志转存到 `~/.miniCC/logs/mcp-<服务器名>.log`（不刷屏）；连接失败、调用失败由 miniCC 直接报告
 - 项目指令：全局 `~/.miniCC/CC.md` 与项目根目录 `CC.md` 会被自动追加到系统提示词（全局在前、项目在后），每次请求实时读取，写完即生效
 - 模型切换：默认 `kimi`；`/model` 查看当前模型与可选列表，`/model deepseek` 切换（需在 `.env` 配好该模型的 `DEEPSEEK_API_KEY` / `DEEPSEEK_BASE_URL`）；在 `llm/model.py` 的 `MODELS` 中加一条配置即可接入新模型
+- MCP 工具：推荐用斜杠命令管理（重启后连接生效）：
+  ```
+  /mcp add niu-lai https://niu-lai.net/api/mcp            # 远程 HTTP 服务器
+  /mcp add yahoo -- uvx --with "mcp<2" yahoo-finance-mcp  # 本地 stdio 服务器（-- 之后为命令）
+  ```
+  `/mcp` 列出全部、`/mcp remove <name>` 移除。也可直接编辑 `~/.miniCC/mcp.json`（格式与 Claude Code 的 `.mcp.json` 一致：http 用 `url` + `headers`，stdio 用 `command` + `args` + `env`）
 - 常用命令示例：`/resume`（列出历史会话并选择继续）、`/context`（查看上下文占用）、`/compact`（手动压缩上下文）、`/skills`（列出可用技能）、`/memory 用户偏好...`（记住约定）、`! pytest tests/`（直通跑命令）
 
 ## 技术栈
 
-Python 3.10+（dataclass / typing）、OpenAI Python SDK（function calling）、Tavily Search API、PyYAML、unittest；setuptools 打包（`pyproject.toml` → `miniCC` 命令）；配置全部经 `.env` 注入，不硬编码密钥。
-
-## 后续规划
-
-- **patch editing**：参照 Claude Code，把 `edit_file` 从「单次定点替换」扩展为「一次提交多处替换」（行号 + 上下文定位），并引入编辑预览/失败回退等防护
-- **长期记忆按用户/会话隔离**：当前 `memory.json` 为单机全局文件，未区分用户维度
+Python 3.10+（dataclass / typing）、OpenAI Python SDK（function calling）、官方 mcp SDK（MCP 客户端）、Tavily Search API、PyYAML、unittest；setuptools 打包（`pyproject.toml` → `miniCC` 命令）；配置全部经 `.env` 注入，不硬编码密钥。

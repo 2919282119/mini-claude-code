@@ -1,12 +1,13 @@
-from tools.load_skill import load_skill_tool
-from tools.my_tools.basic.glob import glob_tool
-from tools.my_tools.usual.search_web import search_tool
-from tools.my_tools.basic.bash import bash_tool
-from tools.my_tools.basic.edit_file import edit_file_tool
-from tools.my_tools.basic.grep import grep_tool
-from tools.my_tools.basic.ls import list_dir_tool
-from tools.my_tools.basic.read_file import read_file_tool
-from tools.my_tools.basic.write_file import write_file_tool
+from tools.local.usual.load_skill import load_skill_tool
+from tools.local.builtin.glob import glob_tool
+from tools.local.usual.search_web import search_tool
+from tools.local.builtin.bash import bash_tool
+from tools.local.builtin.edit_file import edit_file_tool
+from tools.local.builtin.grep import grep_tool
+from tools.local.builtin.ls import list_dir_tool
+from tools.local.builtin.read_file import read_file_tool
+from tools.local.builtin.write_file import write_file_tool
+from tools.mcp.manager import load_mcp_tools
 from tools.tool_registry import ToolRegistry
 
 def tools_setup():
@@ -21,4 +22,9 @@ def tools_setup():
     registry.register(read_file_tool)
     registry.register(write_file_tool)
     registry.register(load_skill_tool)
+
+    # 远程 MCP 工具（未配置时为空列表）
+    for tool in load_mcp_tools():
+        registry.register(tool)
+
     return registry
