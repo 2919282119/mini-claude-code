@@ -1,4 +1,3 @@
-import sys
 import uuid
 from pathlib import Path
 
@@ -14,12 +13,6 @@ from tools.setup import tools_setup
 
 
 def main():
-    # Windows 控制台默认 GBK，emoji 等字符直接 print 会抛 UnicodeEncodeError；
-    # 统一按 UTF-8 输出且不抛错（终端不支持时显示乱码，但程序不会崩）
-    if hasattr(sys.stdout, "reconfigure"):
-        sys.stdout.reconfigure(encoding="utf-8", errors="replace")
-        sys.stderr.reconfigure(encoding="utf-8", errors="replace")
-
     # 工具的注册和初始化不应该放在agent里面，而是放在app层
     registry = tools_setup()
 
