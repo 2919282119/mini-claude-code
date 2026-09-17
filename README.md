@@ -16,7 +16,7 @@
 | 工具注册表 | `ToolRegistry`：声明式定义工具（名称/描述/参数/权限级），自动生成 OpenAI function-calling 的 JSON Schema |
 | 子 Agent 并行 | `run_subagent` 一次接收 `tasks` 列表（每项是一段**自包含**的任务描述），用 `ThreadPoolExecutor` **并行**执行，上限 `MAX_SUBAGENT_COUNT = 4`、多余任务排队，全部结束后把 `{"results": [{"task", "result"}]}` 回填给主 Agent。每个子任务各自新建 `AgentState` + `ContextManager`——**看不到主对话**、不写父会话消息、不落盘、不碰长期记忆（`memory_manager=None`）。禁止嵌套由代码保证：`create_subagent_registry` 按名字把 `run_subagent` 从子注册表里**剔除**，提示词里的约束只是辅助说明。权限**在派生时确认一次**：工具为 `EXECUTE` 级、用户看到完整任务列表后确认，子 Agent 内部以 `permission_mode="auto"` 跳过逐次询问（`check_permission` 是阻塞式 `input()`，多线程并行会抢 stdin）。子 Agent **静默执行**（`verbose=False`，不打印工具调用），结束后统一打印启动/完成行与每个任务的结果摘要；单个子任务异常只影响自己（错误写进该任务的 `error` 字段） |
 | MCP 工具接入 | 基于**官方 mcp SDK**（同步接口封装 async SDK：后台线程 + asyncio 事件循环桥接）。支持两种传输：**Streamable HTTP**（远程 URL）与 **stdio**（本地子进程，如 `uvx`）。配置在 `~/.miniCC/mcp.json`，用斜杠命令管理：`/mcp`（列表）、`/mcp add <name> <url>`、`/mcp add <name> -- <命令>`、`/mcp remove <name>`——由程序确定性合并配置，不会覆盖丢失已有条目。启动时完成握手与 `tools/list`，把远端工具包装成普通 `Tool` 注册进同一注册表——对 agent 完全透明。工具名带 `服务器__工具` 前缀防冲突，权限默认 `EXECUTE`（首次调用需确认），调用失败/超时返回错误不阻塞；单服务器连接失败只警告跳过；stdio 子进程退出时统一清理 |
-| 权限检查 | 按 `READ / WRITE / EXECUTE` 分级：读操作自动放行，写/执行操作交互式询问（y / n / a）；选「记住（a）」后以 *工具名* 为键，本进程内该工具后续调用不再询问（避免逐次确认过于频繁；允许与拒绝都会被记住，重启进程后清空） |
+| 权限检查 | 按 `READ / WRITE / EXECUTE` 分级：读操作自动放行，写/执行操作交互式询问（y / n / a，输入做全角归一化，中文输入法打出的 `ｙ` / `ｎ` / `ａ` 同样有效）；选「记住并允许（a）」后以 *工具名* 为键，本进程内该工具后续调用不再询问（避免逐次确认过于频繁；只记住显式选择的「记住并允许」，回车或 `n` 的拒绝只作用于本次，重启进程后清空） |
 | 会话管理 | 每次对话的完整状态封装为 `AgentState`（session_id / messages / cwd / name / model），每轮回答后序列化为 JSON 存到 `~/.miniCC/sessions/`；新会话自动以首条输入前 50 字符命名，`/resume` 列表因此显示有意义的名称而非 None；支持 `resume` 跨进程恢复任意历史会话继续对话（连同模型选择一并恢复） |
 | 上下文管理 | 从每次响应的 `usage.prompt_tokens` 直接读取真实 token 用量（非本地估算）；`/context` 查看上下文窗口占用（已用 / 剩余 / 百分比）；`/compact` 让 LLM 总结历史消息、保留最近 10 条，以 `[Conversation Summary]` 注入上下文；用量 ≥ 80% 时自动触发压缩 |
 | 多模型映射 | `llm/model.py` 维护模型注册表（当前 kimi / deepseek），每条配置声明「模型名 + API Key 环境变量名 + BaseURL 环境变量名 + 上下文窗口」；默认 deepseek，`/model <name>` 运行时切换（连同上下文窗口一并更新，随会话持久化）；新增模型 = 加一条配置 + `.env` 补对应变量 |
@@ -58,7 +58,7 @@ agent_loop(state, registry, context_manager, memory_manager)        ◀── �
 | 模块 | 职责 | 关键设计 |
 | --- | --- | --- |
 | `tools/` | 工具层 | `Tool` 声明式定义 + `tool_registry` 注册表 + `permission` 权限检查；`local/`（本地实现，其中 `usual/run_subagent.py` 是子 Agent 工具，以工厂闭包持有注册表与 model/cwd）与 `mcp/`（MCP 接入，含远程 HTTP 与本地 stdio 两种传输）最终都包装成 `Tool` 注册进同一注册表——新增工具 = 一个 `Tool(...)` 声明，无需改动 agent 主循环 |
-| `agent/` | 智能体层 | `agent.py` 主循环（含 30 次循环上限，`verbose` / `permission_mode` 两个开关供子 Agent 复用同一套循环）；`session.py` AgentState 会话状态与持久化；`context.py` token 用量跟踪与上下文压缩；`memory.py` 跨会话长期记忆；`skill.py` SKILL.md 发现与内置技能安装；`system_prompt.py` 行为约束（先理解再修改 / 优先获取真实信息 / 控制工具调用等中文工作准则）+ CC.md（全局/项目级）加载 |
+| `agent/` | 智能体层 | `agent.py` 主循环（含 30 次循环上限，`verbose` / `permission_mode` 两个开关供子 Agent 复用同一套循环）；`session.py` AgentState 会话状态与持久化；`context.py` token 用量跟踪与上下文压缩；`memory.py` 跨会话长期记忆；`skill.py` SKILL.md 发现与内置技能安装；`system_prompt.py` 行为约束（先理解再修改 / 优先获取真实信息 / 控制工具调用 / 子 Agent 委派准则等中文工作准则）+ CC.md（全局/项目级）加载 |
 | `commands/` | 命令层 | 斜杠命令与 `!` Shell 直通，与正常对话分流 |
 | `llm/` | LLM 客户端 | OpenAI 兼容 SDK 封装，`tools` 参数可选传递 |
 

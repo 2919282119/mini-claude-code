@@ -3,7 +3,7 @@ from unittest import mock
 
 from llm.model import DEFAULT_MODEL
 from tools.Tool import Tool
-from tools.permission import check_permission, clear_remembered
+from tools.permission import _remembered, check_permission, clear_remembered
 from tools.setup import tools_setup
 
 
@@ -40,6 +40,30 @@ class TestPermission(unittest.TestCase):
         # 记住后不再询问，即使 input 会拒绝也不影响
         with mock.patch("builtins.input", return_value="n"):
             self.assertTrue(check_permission(tool, args))
+
+    def test_deny_is_not_remembered(self):
+        """回归：拒绝（回车或 n）只作用于本次，不能被记住——否则该工具会被静默拒绝"""
+        for deny in ("", "n"):
+            clear_remembered()
+            tool = self.make_tool("EXECUTE")
+
+            with mock.patch("builtins.input", return_value=deny):
+                self.assertFalse(check_permission(tool, {}))
+            self.assertNotIn(tool.name, _remembered)
+
+            # 下一次仍会询问，并且可以改判为允许
+            with mock.patch("builtins.input", return_value="y") as fake_input:
+                self.assertTrue(check_permission(tool, {}))
+            fake_input.assert_called_once()
+
+    def test_fullwidth_input_accepted(self):
+        """回归：中文输入法打出的全角字符（ｙ / ａ / ｎ）也要能识别"""
+        for fullwidth, expected in (("ｙ", True), ("ａ", True), ("ｎ", False)):
+            clear_remembered()
+            tool = self.make_tool("EXECUTE")
+
+            with mock.patch("builtins.input", return_value=fullwidth):
+                self.assertEqual(check_permission(tool, {}), expected)
 
     def test_remember_is_per_tool(self):
         # 记忆以工具名为粒度：同一工具记住后不再询问（参数无关），另一工具仍需询问
