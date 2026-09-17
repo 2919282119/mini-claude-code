@@ -14,19 +14,28 @@ from tools.tool_registry import ToolRegistry
 
 MAX_SUBAGENT_COUNT=4
 
-SUBAGENT_SYSTEM_PROMPT = SYSTEM_PROMPT + """
-你是主 Agent 委派的子 Agent，只处理当前收到的任务。
+SUBAGENT_SYSTEM_PROMPT = """
+你是一个 SubAgent。
 
-不要创建或委派其他子 Agent。
-不要管理会话、长期记忆，也不要直接与用户对话。
+你只负责执行主 Agent 分配的任务。
+
+禁止：
+1. 调用 run_subagent
+2. 创建新的任务
+3. 与用户交互
+4. 管理会话和记忆
+
+允许：
+- 使用已有工具
+- 读取代码
+- 分析问题
 
 完成后返回：
+
 1. 结论
 2. 涉及文件
 3. 验证结果
 4. 遗留风险
-
-无法完成时，明确说明原因。
 """
 
 
@@ -171,6 +180,8 @@ def create_run_subagent_tool(
         description=(
             "启动多个SubAgent并行执行独立任务。"
             "适用于代码分析、问题调查、测试分析等可以并行拆分的任务。"
+            "子 Agent 看不到主对话，每个任务必须自包含（目标、涉及文件、约束、验收标准）。"
+            "子 Agent 不能再派生 SubAgent，也不能与用户交互。"
         ),
         parameters={
             "type": "object",
