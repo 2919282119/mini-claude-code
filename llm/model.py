@@ -15,10 +15,10 @@ MODELS = {
         context_window=262144
     ),
     "deepseek": ModelConfig(
-        name="deepseek-v4-flash-ascend1",
+        name="deepseek-flash",
         api_key_env="DEEPSEEK_API_KEY",
         base_url_env="DEEPSEEK_BASE_URL",
         context_window=1000000
     ),
 }
-DEFAULT_MODEL = "kimi"
+DEFAULT_MODEL = "deepseek"

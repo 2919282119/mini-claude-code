@@ -4,6 +4,7 @@ from unittest import mock
 
 from agent.agent import agent_loop
 from agent.session import AgentState
+from llm.model import DEFAULT_MODEL
 from tools.setup import tools_setup
 
 
@@ -40,7 +41,7 @@ class TestToolErrorHandling(unittest.TestCase):
     def setUp(self):
         # 测试只关心本地工具；不连接真实的 MCP 服务器（隔离用户配置）
         with mock.patch("tools.setup.load_mcp_tools", return_value=[]):
-            self.registry = tools_setup()
+            self.registry = tools_setup(DEFAULT_MODEL, ".")
 
         self.context_manager = mock.MagicMock()
         self.memory_manager = mock.MagicMock()

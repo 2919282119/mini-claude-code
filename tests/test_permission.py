@@ -1,6 +1,7 @@
 import unittest
 from unittest import mock
 
+from llm.model import DEFAULT_MODEL
 from tools.Tool import Tool
 from tools.permission import check_permission, clear_remembered
 from tools.setup import tools_setup
@@ -60,11 +61,12 @@ class TestToolPermissionLevels(unittest.TestCase):
     def test_dangerous_tools_marked(self):
         # 只检查本地工具；不连接真实的 MCP 服务器（隔离用户配置）
         with mock.patch("tools.setup.load_mcp_tools", return_value=[]):
-            registry = tools_setup()
+            registry = tools_setup(DEFAULT_MODEL, ".")
 
         levels = {t.name: t.permission_level for t in registry.all()}
 
         self.assertEqual(levels["bash"], "EXECUTE")
+        self.assertEqual(levels["run_subagent"], "EXECUTE")
         self.assertEqual(levels["write_file"], "WRITE")
         self.assertEqual(levels["edit_file"], "WRITE")
         # 读类工具默认 READ

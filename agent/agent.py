@@ -18,125 +18,147 @@ load_dotenv()
 # ========================
 MAX_LOOP_CNT=30
 
-def agent_loop(state:AgentState,registry:ToolRegistry,context_manager:ContextManager,memory_manager:MemoryManager):
-    # 这里传的是局部引用，后面修改没问题
-    messages=state.messages
-    # 这里llm要的tools列表是schema（dict）
-    tools=registry.schemas()
+def agent_loop(
+    state,
+    registry,
+    context_manager,
+    memory_manager=None,
+    system_prompt: str = SYSTEM_PROMPT,
+    verbose: bool = True, # 默认是打印调用信息的
+    permission_mode: str = "interactive",
+):
+    messages = state.messages
+    tools = registry.schemas()
 
-    # 设置最大循环次数，避免无限循环
-    loop_cnt=0
+    loop_cnt = 0
+
     while True:
+
         loop_cnt += 1
+
         if loop_cnt > MAX_LOOP_CNT:
-            print("Max loop count reached")
+            if verbose:
+                print("Max loop count reached")
             break
-        # 每次请求动态构造 system prompt
-        system_prompt = SYSTEM_PROMPT
 
-        # 加载CC.md（全局+本项目）
-        cc_prompt=load_cc_md()
-        system_prompt+=cc_prompt
 
-        # 加载memory
-        memory_prompt = memory_manager.format_for_prompt()
-        if memory_prompt:
-            system_prompt += "\n\n" + memory_prompt
+        # 构造 system prompt
+        current_system_prompt = system_prompt
 
-        # 1. 调用 LLM
-        config=MODELS[state.model]
+        # 加载 CC.md
+        current_system_prompt += load_cc_md()
+
+
+        # 加载 memory
+        if memory_manager:
+            memory_prompt = memory_manager.format_for_prompt()
+
+            if memory_prompt:
+                current_system_prompt += "\n\n" + memory_prompt
+
+
+        # 调用 LLM
+        config = MODELS[state.model]
+
         response = call_llm(
             config,
-            # 这里做了一个修改，平时压缩或者追加都是修改的state.messages，然后call_llm的时候再在开头添加system_prompt，防止把system_prompt也给压缩了
             [
                 {
                     "role": "system",
-                    "content": system_prompt
+                    "content": current_system_prompt,
                 },
-                *messages
+                *messages,
             ],
-            tools=tools
+            tools=tools,
         )
-        # 根据LLM的response来更新上下文窗口
+
+
         context_manager.update(response)
 
         message = response.choices[0].message
 
-
-        # 2. 把 LLM 的回复加入上下文
-        # 注意这里不能直接把message加入到messages中，因为message不是dict，而是ChatCompletionMessage对象
         messages.append(message.model_dump())
 
-        # 若usage_ratio超过80%自动执行compact
         context_manager.auto_compact(state)
 
-        # 3. 没有 Tool Call，说明 LLM 已经可以直接回答
+
+        # 无工具调用，直接返回
         if not message.tool_calls:
             return message.content
 
-        # 4. 处理 Tool Call
+
+        # 处理工具调用
         for tool_call in message.tool_calls:
 
             tool_name = tool_call.function.name
 
-            # LLM 生成的参数不可信：JSON 解析失败同样不能崩掉 agent
             try:
-                arguments = json.loads(
-                    tool_call.function.arguments
-                )
+                arguments = json.loads(tool_call.function.arguments)
+
             except json.JSONDecodeError as e:
-                messages.append({
-                    "role": "tool",
-                    "tool_call_id": tool_call.id,
-                    "content": json.dumps(
-                        {"error": f"工具参数 JSON 解析失败: {e}"},
-                        ensure_ascii=False
-                    )
-                })
+
+                messages.append(
+                    {
+                        "role": "tool",
+                        "tool_call_id": tool_call.id,
+                        "content": json.dumps(
+                            {
+                                "error": f"工具参数 JSON 解析失败: {e}"
+                            },
+                            ensure_ascii=False,
+                        ),
+                    }
+                )
+
                 continue
 
-            print(f"🔧 调用工具: {tool_name}")
-            print(f"📦 参数: {arguments}")
 
-            # 5. 权限检查 + 执行具体 Tool
+            if verbose:
+                print(f"🔧 调用工具: {tool_name}")
+                print(f"📦 参数: {arguments}")
+
+
             tool = registry.get(tool_name)
 
+
             if tool is None:
-                messages.append({
+
+                result = {
+                    "error": f"未知工具: {tool_name}"
+                }
+
+            else:
+
+                if permission_mode == "auto":
+                    allowed = True
+                else:
+                    allowed = check_permission(tool, arguments)
+
+
+                if not allowed:
+
+                    result = {
+                        "error": f"用户拒绝了工具调用: {tool_name}"
+                    }
+
+                else:
+
+                    try:
+                        result = tool.execute(**arguments)
+
+                    except Exception as e:
+                        result = {
+                            "error": f"工具执行失败: {e}"
+                        }
+
+
+            messages.append(
+                {
                     "role": "tool",
                     "tool_call_id": tool_call.id,
                     "content": json.dumps(
-                        {"error": f"未知工具: {tool_name}"},
-                        ensure_ascii=False
-                    )
-                })
-                continue
-
-            if not check_permission(tool, arguments):
-                messages.append({
-                    "role": "tool",
-                    "tool_call_id": tool_call.id,
-                    "content": json.dumps(
-                        {"error": f"用户拒绝了工具调用: {tool_name}"},
-                        ensure_ascii=False
-                    )
-                })
-                continue
-
-            # 参数错误或执行异常不应崩掉整个 agent，
-            # 而是作为工具结果返回，让 LLM 看到错误后自行纠正重试
-            try:
-                result = tool.execute(**arguments)
-            except Exception as e:
-                result = {"error": f"工具执行失败: {e}"}
-
-            # 6. 把 Tool 执行结果返回给 LLM
-            messages.append({
-                "role": "tool",
-                "tool_call_id": tool_call.id,
-                "content": json.dumps(
-                    result,
-                    ensure_ascii=False
-                )
-            })
-
+                        result,
+                        ensure_ascii=False,
+                    ),
+                }
+            )
