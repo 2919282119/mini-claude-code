@@ -2,17 +2,17 @@
 
 一个纯 Python 从零实现的 AI 编程助手（CLI），模仿 **Claude Code** 的核心工作方式：用户以自然语言下达编程任务，Agent 通过 **ReAct 循环**（Reason → Act → Observe）自主地读代码、改代码、跑命令、查资料，直到完成任务，并在写文件、执行命令等敏感操作前向用户请求授权。
 
-- 纯 Python 实现，无 Web 框架，核心代码约 2900 行
+- 纯 Python 实现，无 Web 框架，核心代码约 2700 行（43 个源文件，不含测试）
 - LLM 通过 OpenAI 兼容接口调用；内置**多模型映射**（`llm/model.py`），每个模型绑定各自的 API Key / BaseURL 环境变量与上下文窗口，`/model` 可在运行时切换
 - 已打包为可安装 CLI（`pyproject.toml`）：`pip install -e .` 后，任意目录下执行 `miniCC` 即可启动
-- 项目目录：`tools/`、`agent/`、`commands/`、`llm/`、`cli/` 分层解耦，各模块可独立替换
+- 项目目录：`tools/`、`agent/`、`commands/`、`llm/`、`rag/`、`cli/` 分层解耦，各模块可独立替换
 
 ## 核心功能
 
 | 能力 | 说明 |
 | --- | --- |
 | ReAct Agent 循环 | `agent_loop` 反复执行「组装上下文 → 调用 LLM → 若请求工具则执行并回填结果 → 再调用」，直到 LLM 给出最终答复；对话中每步都打印工具调用与参数，过程可观测；单轮任务最多循环 30 次（`MAX_LOOP_CNT`），超过即停止并提示，避免工具调用失控陷入无限循环；工具参数错误或执行异常**不会中断进程**，错误信息作为工具结果回填，由 LLM 自行纠正重试 |
-| 工具系统 | 8 个基础工具：`read_file` / `write_file` / `edit_file` / `grep` / `glob`（按通配符查找文件） / `bash` / `list_dir` / `search_web`（联网搜索），外加 `load_skill` 与 `run_subagent`（子 Agent），共 10 个；`bash` 支持 `background=true` 后台启动长期服务（如 dev server，stdin/out/err 全部隔离），前台命令 30s 超时后**杀整棵进程树**（防止孙进程持有管道导致永久卡死）；grep 自动跳过 `.git`/`node_modules` 等目录 |
+| 工具系统 | 8 个基础工具：`read_file` / `write_file` / `edit_file` / `grep` / `glob`（按通配符查找文件） / `bash` / `list_dir` / `search_web`（联网搜索），外加 `load_skill` / `run_subagent`（子 Agent） / `rag_search`（知识库检索，按库名选库），共 11 个；`bash` 支持 `background=true` 后台启动长期服务（如 dev server，stdin/out/err 全部隔离），前台命令 30s 超时后**杀整棵进程树**（防止孙进程持有管道导致永久卡死）；grep 自动跳过 `.git`/`node_modules` 等目录 |
 | 工具注册表 | `ToolRegistry`：声明式定义工具（名称/描述/参数/权限级），自动生成 OpenAI function-calling 的 JSON Schema |
 | 子 Agent 并行 | `run_subagent` 一次接收 `tasks` 列表（每项是一段**自包含**的任务描述），用 `ThreadPoolExecutor` **并行**执行，上限 `MAX_SUBAGENT_COUNT = 4`、多余任务排队，全部结束后把 `{"results": [{"task", "result"}]}` 回填给主 Agent。每个子任务各自新建 `AgentState` + `ContextManager`——**看不到主对话**、不写父会话消息、不落盘、不碰长期记忆（`memory_manager=None`）。禁止嵌套由代码保证：`create_subagent_registry` 按名字把 `run_subagent` 从子注册表里**剔除**，提示词里的约束只是辅助说明。权限**在派生时确认一次**：工具为 `EXECUTE` 级、用户看到完整任务列表后确认，子 Agent 内部以 `permission_mode="auto"` 跳过逐次询问（`check_permission` 是阻塞式 `input()`，多线程并行会抢 stdin）。子 Agent **静默执行**（`verbose=False`，不打印工具调用），结束后统一打印启动/完成行与每个任务的结果摘要；单个子任务异常只影响自己（错误写进该任务的 `error` 字段） |
 | MCP 工具接入 | 基于**官方 mcp SDK**（同步接口封装 async SDK：后台线程 + asyncio 事件循环桥接）。支持两种传输：**Streamable HTTP**（远程 URL）与 **stdio**（本地子进程，如 `uvx`）。配置在 `~/.miniCC/mcp.json`，用斜杠命令管理：`/mcp`（列表）、`/mcp add <name> <url>`、`/mcp add <name> -- <命令>`、`/mcp remove <name>`——由程序确定性合并配置，不会覆盖丢失已有条目。启动时完成握手与 `tools/list`，把远端工具包装成普通 `Tool` 注册进同一注册表——对 agent 完全透明。工具名带 `服务器__工具` 前缀防冲突，权限默认 `EXECUTE`（首次调用需确认），调用失败/超时返回错误不阻塞；单服务器连接失败只警告跳过；stdio 子进程退出时统一清理 |
@@ -25,6 +25,7 @@
 | 跨会话长期记忆 | `~/.miniCC/memory.json` 持久化，`/memory` 支持增删查清；每次请求动态拼进 system prompt，让 Agent 在后续会话中记得用户偏好与约定 |
 | 项目指令文件 CC.md | 两级指令加载：全局 `~/.miniCC/CC.md` + 当前项目 `./CC.md`，每次请求动态读取追加到系统提示词（分别标注 `# Global Instructions` / `# Project Instructions`），用于固化跨项目的个人偏好与项目级约定（相当于 Claude Code 的 CLAUDE.md） |
 | Skills 技能系统 | 以 Claude Code 的 `SKILL.md`（YAML frontmatter + Markdown）为规范，从全局目录 `~/.miniCC/skills/<name>/SKILL.md` 自动发现；采用**渐进式披露**——仅把「技能名 + 一句话描述」做成 `load_skill` 工具的 description 暴露给模型，由模型按需调用加载完整内容，避免上下文无谓膨胀；自带内置技能（如 `find-skills`），首次启动时自动复制到全局技能目录（已存在则不覆盖），`/skills` 可列出全部可用技能 |
+| RAG 知识库检索（可选） | `rag_search(kb, query)` 对本地 PDF 知识库做 FAISS 向量检索——**一个 PDF 一个库**，库清单写在 `static/rag_files/knowledge_bases.json`（库名 → PDF 文件名 + 一句话描述，描述手写）。库列表在装配时拼进 `rag_search` 的 description（同 `load_skill` 的做法），模型一开始就知道有哪些库可选、不必多一次往返去发现；库名匹配做了 NFKC + 大小写归一化（中文输入法的全角字符也能对上），对不上则返回「知识库不存在 + 可用列表」让模型自纠。检索条数写死 `k=8`：不让模型选 —— 它看不到相似度分数、也不知道上一批够不够，猜出来的数字不如钉死的常量；嫌少时让它换个 query 再检索一次（由"返回了什么"驱动，比猜有依据）。**全链路懒加载**：langchain、embedding 模型、FAISS 索引都在首次调用时才加载，且这些 import 都在函数内部——因此即使 RAG 依赖没装（`pip install -e ".[rag]"`，可选）或某个库的索引没建，miniCC 也照常启动，工具返回一句提示文本交给 LLM，而不是抛异常打断主循环。**按库懒建**：某个库首次被检索且索引不存在时才构建（实测 303 页的书 757 chunks 约 2 分钟、519 页的书 1095 chunks 约 3 分钟，耗时随篇幅增长），不会启动时把全部 PDF 建一遍；判断依据是 `index.faiss` 是否存在而非目录是否存在（构建中途失败留下的空目录不会造成「已建好」的假象）。索引在 `rag/rag_index/<库名>/`，是纯本机产物，已在 `.gitignore` 排除 |
 
 ## 系统设计
 
@@ -61,17 +62,19 @@ agent_loop(state, registry, context_manager, memory_manager)        ◀── �
 | `agent/` | 智能体层 | `agent.py` 主循环（含 30 次循环上限，`verbose` / `permission_mode` 两个开关供子 Agent 复用同一套循环）；`session.py` AgentState 会话状态与持久化；`context.py` token 用量跟踪与上下文压缩；`memory.py` 跨会话长期记忆；`skill.py` SKILL.md 发现与内置技能安装；`system_prompt.py` 行为约束（先理解再修改 / 优先获取真实信息 / 控制工具调用 / 子 Agent 委派准则等中文工作准则）+ CC.md（全局/项目级）加载 |
 | `commands/` | 命令层 | 斜杠命令与 `!` Shell 直通，与正常对话分流 |
 | `llm/` | LLM 客户端 | OpenAI 兼容 SDK 封装，`tools` 参数可选传递 |
+| `rag/` | 检索层（可选） | `knowledge_base.py`：读 `static/rag_files/knowledge_bases.json` 库清单（读坏/缺失时安全返回空字典，**绝不抛异常**——它在启动时被导入）、按库名解析 PDF 与索引路径、库名 NFKC + 大小写归一化、生成给 LLM 看的库列表；`build_index.py`：`build_index(kb)` 把一个库的 PDF 切分向量化存到 `rag/rag_index/<库名>/` 并返回向量库（可 `python -m rag.build_index` 建全部库）；`retriever.py`：`get_retriever(kb)` 按库名缓存、索引缺失时补建。重型依赖（langchain / faiss / torch）全部在函数内 import，模块可被安全导入 |
 
 ### 关键设计决策
 
 1. **system prompt 不入 `messages`，请求时动态拼接**——压缩（compact）只操作 `state.messages`，因此永远不会把 system prompt 一起压缩掉（修复过该 bug）。
 2. **压缩策略 = LLM 总结 + 保留窗口**：旧消息交给 LLM 按固定要点（用户目标/已完成工作/文件路径与改动/错误与解法/未完成任务）提炼为摘要，与最近 10 条原始消息重组上下文，在信息不丢失与 token 控制之间折中。
 3. **声明式工具 + 自动 Schema**：每把工具只需维护一份「描述 + JSON 参数约束 + 权限级」，function-calling 所需的 schema 由 `Tool.to_schema()` 统一生成。
-4. **读代码库用 grep 而非 RAG**：不做向量库/索引，靠 `grep`/`read_file` 精确检索——小项目下零开销、结果可信，且避免检索噪声误导模型。
+4. **读代码库用 grep，只有文档知识库才用 RAG**：代码检索不做向量索引，靠 `grep`/`read_file` 精确检索——小项目下零开销、结果可信，且避免检索噪声误导模型；`rag_search` 只服务于「这份文档语料里怎么讲的」这类语义问题，语料是本地 PDF（不是代码库），与代码检索互不干扰。**工具的 description 刻意保持与领域无关**（只讲「检索 PDF 文档、不是源码、按描述挑库」），具体主题由 manifest 里每个库自己的描述承担 —— 否则加一本别的领域的书就得改代码。
 5. **Skill 渐进式披露 + 让模型自己决定加载**：技能目录（名称 + 一句话描述）随 `load_skill` 工具的描述静态发送，不进 system prompt、不随对话累积；完整 SKILL.md 正文只在模型调用 `load_skill` 后作为工具结果进入上下文，同一技能不会被反复注入。
 6. **创建与修改分工，局部编辑带防误改保护**：`write_file` 负责创建文件/整体覆盖；修改已有文件走 `edit_file` 的 `old_text → new_text` 定点替换——匹配串出现多次时**拒绝执行**（防止误改多处），找不到时返回错误信息让模型自纠。系统提示词同时引导模型「修改已有文件优先用 `edit_file`，而非整文件重写」。（注：Claude Code 式 patch editing——一次提交多处替换——尚未实现，见「后续规划」）
 7. **`state.messages` 引用保持稳定（clear + extend）**：该列表被 REPL、agent 主循环、命令层共享持有，一旦重绑定（`state.messages = [...]`），其它持有者仍在操作旧列表，出现「用户输入加不进去」等分叉 bug——`/resume` 恢复会话与 compact 压缩上下文因此统一改为 `clear() + extend()` 原地更新，并由 `tests/test_resume.py` 回归测试锁定该行为。
-8. **子 Agent = 复用同一套 `agent_loop` + 两个开关，隔离靠「新建对象」而非「共享状态」**：子 Agent 不另写一套循环，而是在 `run_one_subagent` 里复用 `agent_loop` 并传 `verbose=False`（静默）、`permission_mode="auto"`（跳过逐次询问）、子 Agent 专用提示词、`memory_manager=None`（不碰长期记忆）；隔离性来自每个子任务各自新建 `AgentState` 与 `ContextManager`，父会话的 `messages` 不被写入。**禁止嵌套**以代码为准：`create_subagent_registry` 按名字过滤掉 `run_subagent` 构造子注册表。注册表在装配时把 `model` / `cwd` 注入工具闭包（`tools_setup(model, cwd)`，注意传的是 `MODELS` 的 key 而不是 `ModelConfig.name`），所以会话中途 `/model` 切换不会改变本次启动创建的子 Agent 工具。并发上限取 4：`call_llm` 每次新建 client、本身线程安全，真正瓶颈在**账号侧的并发额度**（实测 kimi 侧并发为 1，任务多时会返回 429，错误只落在该子任务上）。
+8. **知识库清单写进 `rag_search` 的 description，而不是单开一个「列出知识库」的工具**：库名是 `kb` 参数的合法取值，本就属于工具契约的一部分——写进 description 后模型开局就知道有哪些库可选，省掉一次「先发现再调用」的往返；更重要的是避免了模型**不去查列表、直接瞎猜库名**导致的参数错误重试（那比多一跳更贵）。这与 `load_skill` 把技能列表拼进 description 是同一套做法，风格一致。代价是库很多时 description 会膨胀，且新增库需重启才被模型看到；当前是个位数知识库，代价可忽略。
+9. **子 Agent = 复用同一套 `agent_loop` + 两个开关，隔离靠「新建对象」而非「共享状态」**：子 Agent 不另写一套循环，而是在 `run_one_subagent` 里复用 `agent_loop` 并传 `verbose=False`（静默）、`permission_mode="auto"`（跳过逐次询问）、子 Agent 专用提示词、`memory_manager=None`（不碰长期记忆）；隔离性来自每个子任务各自新建 `AgentState` 与 `ContextManager`，父会话的 `messages` 不被写入。**禁止嵌套**以代码为准：`create_subagent_registry` 按名字过滤掉 `run_subagent` 构造子注册表。注册表在装配时把 `model` / `cwd` 注入工具闭包（`tools_setup(model, cwd)`，注意传的是 `MODELS` 的 key 而不是 `ModelConfig.name`），所以会话中途 `/model` 切换不会改变本次启动创建的子 Agent 工具。并发上限取 4：`call_llm` 每次新建 client、本身线程安全，真正瓶颈在**账号侧的并发额度**（实测 kimi 侧并发为 1，任务多时会返回 429，错误只落在该子任务上）。
 
 ### 目录结构
 
@@ -91,8 +94,14 @@ miniCC/
 │   ├── model.py             # 模型映射表（模型名 / API Key 与 BaseURL 的 env 变量名 / 上下文窗口）
 │   └── call_llm.py          # OpenAI 兼容调用（按 ModelConfig 读取对应环境变量）
 ├── cli/banner.py            # 启动 Banner（Logo / 当前模型 / 工作目录）
-├── skills/                  # 内置技能（首次启动自动复制到 ~/.miniCC/skills/）
-│   └── find-skills/SKILL.md
+├── rag/                     # 知识库检索（可选依赖，见 pyproject 的 [rag] extra）
+│   ├── knowledge_base.py    #   库清单读取 + 路径解析 + 库名归一化 + 生成库列表
+│   ├── build_index.py       #   build_index(kb)：PDF → 切分 → embedding → FAISS（可 python -m 建全部）
+│   └── retriever.py         #   get_retriever(kb)：按库缓存的懒加载，索引缺失时自动补建
+├── static/
+│   ├── rag_files/           # knowledge_bases.json（库清单，入库）+ 原始 PDF（已 gitignore）
+│   └── skills/              # 内置技能（首次启动自动复制到 ~/.miniCC/skills/）
+│       └── find-skills/SKILL.md
 ├── tools/
 │   ├── Tool.py              # 声明式工具基类（自动生成 schema）
 │   ├── tool_registry.py     # 注册表
@@ -100,7 +109,7 @@ miniCC/
 │   ├── setup.py             # 工具装配（本地 + MCP + 子 Agent；入参 model/cwd 供子 Agent 继承）
 │   ├── local/               # 本地工具实现
 │   │   ├── builtin/         #   bash / grep / glob / ls / read / write / edit
-│   │   └── usual/           #   search_web / load_skill / run_subagent（子 Agent）
+│   │   └── usual/           #   search_web / load_skill / run_subagent（子 Agent） / search_rag（知识库）
 │   └── mcp/                 # MCP 接入（基于官方 mcp SDK）
 │       ├── config.py        #   ~/.miniCC/mcp.json 读写
 │       ├── client.py        #   SDK 封装（后台线程 + asyncio 事件循环桥接）
@@ -114,7 +123,8 @@ miniCC/
     ├── test_mcp.py          # unittest：SDK 类型转换、工具包装、失败跳过、配置读取
     ├── test_mcp_commands.py # unittest：/mcp 增删查（确定性合并，不丢已有配置）
     ├── test_console_output.py # 回归：输出流不支持 emoji（GBK 管道）时不崩
-    └── test_subagent.py     # unittest：真并行（Barrier）/ 并发上限 / 禁嵌套 / 任务隔离 / 汇总输出
+    ├── test_subagent.py     # unittest：真并行（Barrier）/ 并发上限 / 禁嵌套 / 任务隔离 / 汇总输出
+    └── test_rag.py          # 回归：无 langchain 也能导入 / 索引不可用时降级不抛异常 / 空目录触发补建 / k=8
 ```
 
 ## 快速开始
@@ -122,6 +132,10 @@ miniCC/
 ```bash
 pip install openai python-dotenv tavily-python pyyaml mcp
 # 复制 .env.example 为 .env，填入所用模型的 Key/BaseURL（KIMI_API_KEY / KIMI_BASE_URL 或 DEEPSEEK_*）与 TAVILY_API_KEY
+
+# 可选：启用 rag_search 知识库检索（会拉 langchain / faiss / torch，体积较大）
+pip install -e ".[rag]"
+python -m rag.build_index     # 预热索引，避免第一次对话中途卡 2 分钟
 
 # 方式一：项目内直接运行
 python main.py
@@ -131,7 +145,12 @@ pip install -e .
 miniCC
 ```
 
-- 存储位置：会话 `~/.miniCC/sessions/`，长期记忆 `~/.miniCC/memory.json`，技能 `~/.miniCC/skills/<name>/SKILL.md`（frontmatter 写 `description`，正文写操作规范；手动放入的技能用 `/skills` 刷新即可发现，无需重启）。仓库自带的内置技能（如 `find-skills`）在首次启动时自动复制到该目录，已存在则不覆盖
+- 存储位置：会话 `~/.miniCC/sessions/`，长期记忆 `~/.miniCC/memory.json`，技能 `~/.miniCC/skills/<name>/SKILL.md`（frontmatter 写 `description`，正文写操作规范；手动放入的技能用 `/skills` 刷新即可发现，无需重启）。仓库自带的内置技能（如 `find-skills`）在首次启动时自动复制到该目录，已存在则不覆盖；RAG 索引 `rag/rag_index/<库名>/`（已 gitignore，不入库）
+- RAG 知识库（可选）：`pip install -e ".[rag]"` 启用。把 PDF 放进 `static/rag_files/`，并在同目录的 `knowledge_bases.json` 里登记一个库：
+  ```json
+  { "ai-agents-in-depth": { "file": "AI-Agents-In-Depth.pdf", "description": "一句话描述，模型靠它决定用哪个库" } }
+  ```
+  `file` 是磁盘上的 PDF 文件名（中英文都行），键名是给模型的**库名**（建议短、ASCII，因为模型必须一字不差地输出它）。库列表在启动时读入并拼进 `rag_search` 的描述，所以**新增库要重启**才被模型看到（和 MCP 工具一样）。索引按库懒建：某库首次被检索时自动构建（约 2~3 分钟/库，随篇幅增长），也可先 `python -m rag.build_index` 一次建好全部；换 PDF 后要删掉该库的索引目录重建。未安装 RAG 依赖时 miniCC 照常启动，`rag_search` 只返回一句不可用提示
 - MCP 日志：stdio 服务器自身的日志转存到 `~/.miniCC/logs/mcp-<服务器名>.log`（不刷屏）；连接失败、调用失败由 miniCC 直接报告
 - 项目指令：全局 `~/.miniCC/CC.md` 与项目根目录 `CC.md` 会被自动追加到系统提示词（全局在前、项目在后），每次请求实时读取，写完即生效
 - 模型切换：默认 `deepseek`；`/model` 查看当前模型与可选列表，`/model kimi` 切换（需在 `.env` 配好该模型的 `KIMI_API_KEY` / `KIMI_BASE_URL`）；在 `llm/model.py` 的 `MODELS` 中加一条配置即可接入新模型
@@ -145,4 +164,4 @@ miniCC
 
 ## 技术栈
 
-Python 3.10+（dataclass / typing）、OpenAI Python SDK（function calling）、官方 mcp SDK（MCP 客户端）、Tavily Search API、PyYAML、unittest；setuptools 打包（`pyproject.toml` → `miniCC` 命令）；配置全部经 `.env` 注入，不硬编码密钥。
+Python 3.10+（dataclass / typing）、OpenAI Python SDK（function calling）、官方 mcp SDK（MCP 客户端）、Tavily Search API、PyYAML、unittest；**可选** RAG 栈：LangChain（社区包 / HuggingFace / PyMuPDF4LLM / text-splitters）、FAISS、`BAAI/bge-small-zh-v1.5`（经 sentence-transformers）；setuptools 打包（`pyproject.toml` → `miniCC` 命令，RAG 相关依赖放在 `[rag]` extra）；配置全部经 `.env` 注入，不硬编码密钥。

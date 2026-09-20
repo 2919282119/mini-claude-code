@@ -1,7 +1,8 @@
 from llm.model import DEFAULT_MODEL
 from tools.local.usual.load_skill import load_skill_tool
 from tools.local.builtin.glob import glob_tool
-from tools.local.usual.run_subagent import create_subagent_registry, create_run_subagent_tool
+from tools.local.usual.run_subagent import create_run_subagent_tool
+from tools.local.usual.search_rag import rag_tool
 from tools.local.usual.search_web import search_tool
 from tools.local.builtin.bash import bash_tool
 from tools.local.builtin.edit_file import edit_file_tool
@@ -24,6 +25,7 @@ def tools_setup(model=DEFAULT_MODEL,cwd='.'):
     registry.register(read_file_tool)
     registry.register(write_file_tool)
     registry.register(load_skill_tool)
+    registry.register(rag_tool)
 
     # 远程 MCP 工具（未配置时为空列表）
     for tool in load_mcp_tools():

@@ -15,6 +15,14 @@ venv/
 build/
 dist/
 
+# rag静态文档（PDF 体积大不入库，但知识库清单要入库；
+# 用 /* 而不是忽略整个目录，否则 ! 例外规则不会生效）
+static/rag_files/*
+!static/rag_files/knowledge_bases.json
+
+# rag构建产物（本机生成，不要入库）
+rag/rag_index/
+
 # 调试/草稿文件（非正式测试）
 tests/filter.py
 tests/input.py

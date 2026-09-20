@@ -88,7 +88,7 @@ class SkillManager:
     def init_builtin_skills(self):
         """初始化内置 Skill"""
 
-        builtin_skills_dir = Path(__file__).parent.parent / "skills"
+        builtin_skills_dir = Path(__file__).parent.parent / "static" / "skills"
 
         if not builtin_skills_dir.exists():
             return

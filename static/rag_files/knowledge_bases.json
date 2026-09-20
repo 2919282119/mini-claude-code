@@ -1,0 +1,10 @@
+{
+  "ai-agents-in-depth": {
+    "file": "AI-Agents-in-Depth.pdf",
+    "description": "《深入理解 AI Agent：设计原理与工程实践》（李博杰）：Agent 的架构与设计原理、agentic 工作流、工具调用、记忆、推理与工程实践"
+  },
+  "AI-Infra-Book":{
+    "file": "AI-Infra-Book.pdf",
+    "description": "《深入理解 AI Infra：量化分析与系统设计》（李博杰 著）开源书稿：从硬件约束和模型架构出发，量化推导 LLM 推理与训练系统设计。"
+  }
+}

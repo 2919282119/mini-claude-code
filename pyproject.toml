@@ -8,6 +8,18 @@ version = "0.1.0"
 description = "A minimal Claude Code-like coding agent"
 requires-python = ">=3.10"
 
+# RAG 检索（可选）：pip install -e ".[rag]"
+# 不装也不影响 miniCC 启动，rag_search 会返回提示文本
+[project.optional-dependencies]
+rag = [
+    "langchain-community",
+    "langchain-huggingface",
+    "langchain-pymupdf4llm",
+    "langchain-text-splitters",
+    "faiss-cpu",
+    "sentence-transformers"
+]
+
 [project.scripts]
 miniCC = "main:main"
 
@@ -22,8 +34,9 @@ include = [
     "llm*",
     "tools*",
     "cli*",
-    "skills*"
+    "static*",
+    "rag*"
 ]
 
 [tool.setuptools.package-data]
-skills = ["**/*.md"]
+"static.skills" = ["**/*.md"]
