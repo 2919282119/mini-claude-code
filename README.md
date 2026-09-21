@@ -25,7 +25,7 @@
 | 跨会话长期记忆 | `~/.miniCC/memory.json` 持久化，`/memory` 支持增删查清；每次请求动态拼进 system prompt，让 Agent 在后续会话中记得用户偏好与约定 |
 | 项目指令文件 CC.md | 两级指令加载：全局 `~/.miniCC/CC.md` + 当前项目 `./CC.md`，每次请求动态读取追加到系统提示词（分别标注 `# Global Instructions` / `# Project Instructions`），用于固化跨项目的个人偏好与项目级约定（相当于 Claude Code 的 CLAUDE.md） |
 | Skills 技能系统 | 以 Claude Code 的 `SKILL.md`（YAML frontmatter + Markdown）为规范，从全局目录 `~/.miniCC/skills/<name>/SKILL.md` 自动发现；采用**渐进式披露**——仅把「技能名 + 一句话描述」做成 `load_skill` 工具的 description 暴露给模型，由模型按需调用加载完整内容，避免上下文无谓膨胀；自带内置技能（如 `find-skills`），首次启动时自动复制到全局技能目录（已存在则不覆盖），`/skills` 可列出全部可用技能 |
-| RAG 知识库检索（可选） | `rag_search(kb, query)` 对本地 PDF 知识库做 FAISS 向量检索——**一个 PDF 一个库**，库清单写在 `static/rag_files/knowledge_bases.json`（库名 → PDF 文件名 + 一句话描述，描述手写）。库列表在装配时拼进 `rag_search` 的 description（同 `load_skill` 的做法），模型一开始就知道有哪些库可选、不必多一次往返去发现；库名匹配做了 NFKC + 大小写归一化（中文输入法的全角字符也能对上），对不上则返回「知识库不存在 + 可用列表」让模型自纠。检索条数写死 `k=8`：不让模型选 —— 它看不到相似度分数、也不知道上一批够不够，猜出来的数字不如钉死的常量；嫌少时让它换个 query 再检索一次（由"返回了什么"驱动，比猜有依据）。**全链路懒加载**：langchain、embedding 模型、FAISS 索引都在首次调用时才加载，且这些 import 都在函数内部——因此即使 RAG 依赖没装（`pip install -e ".[rag]"`，可选）或某个库的索引没建，miniCC 也照常启动，工具返回一句提示文本交给 LLM，而不是抛异常打断主循环。**按库懒建**：某个库首次被检索且索引不存在时才构建（实测 303 页的书 757 chunks 约 2 分钟、519 页的书 1095 chunks 约 3 分钟，耗时随篇幅增长），不会启动时把全部 PDF 建一遍；判断依据是 `index.faiss` 是否存在而非目录是否存在（构建中途失败留下的空目录不会造成「已建好」的假象）。索引在 `rag/rag_index/<库名>/`，是纯本机产物，已在 `.gitignore` 排除 |
+| RAG 知识库检索（可选） | `rag_search(kb, query)` 对本地 PDF 知识库做**混合检索（稠密向量 + BM25 关键词）**——**一个 PDF 一个库**，库清单写在 `static/rag_files/knowledge_bases.json`（库名 → PDF 文件名 + 一句话描述，描述手写）。库列表在装配时拼进 `rag_search` 的 description（同 `load_skill` 的做法），模型一开始就知道有哪些库可选、不必多一次往返去发现；库名匹配做了 NFKC + 大小写归一化（中文输入法的全角字符也能对上），对不上则返回「知识库不存在 + 可用列表」让模型自纠。检索是**混合检索**：稠密路（FAISS + bge 向量，`k=8`）与稀疏路（BM25，`k=8`，jieba 分词）交给 `EnsembleRetriever` 做 RRF 融合，**融合后截断回 8 条** —— 让给模型的上下文量与混合前完全一致，这样任何效果变化都能归因于混合本身，而不是"同时多给了资料"（两个变量一起动就无法判断）。条数写死而不让模型选：它看不到相似度分数、也不知道上一批够不够，猜出来的数字不如钉死的常量；嫌少时让它换个 query 再检索一次（由"返回了什么"驱动，比猜有依据）。两路权重相等，因为**没有评测集时调权重就是猜**；同时要承认 RRF 的固有局限：**只看排名、不看分数**，某一路给出的低质量结果一样会被等权计入。BM25 的语料直接取自 FAISS 已存的 docstore（`index.pkl` 里就带着 chunk 正文），不额外落一份稀疏索引，因而不会有两份索引不同步的问题。**为什么必须用 jieba**：`BM25Retriever` 默认按空格切词，对中文等于失效（整句变成一个 token），BM25 就只剩"整句精确匹配"一条路；jieba 还能把 `PagedAttention` 这类英文术语原样保留成一个 token，而那正是加 BM25 想捞回来的那类查询。**全链路懒加载**：langchain、embedding 模型、FAISS 索引、jieba 都在首次调用时才加载（首次构造混合检索器实测另有 ~10 秒，且**几乎全部来自 `langchain_classic.retrievers` 这个重模块的导入**——不是 jieba 分词、也不是 BM25 建索引：jieba 词典只占 0.3 秒，对 757 个 chunk 分词同样是亚秒级。`EnsembleRetriever` 只在 `langchain_classic` 里有，`langchain_community.retrievers` 并不导出它，所以这 10 秒省不掉；之后走进程内缓存），且这些 import 都在函数内部——因此即使 RAG 依赖没装（`pip install -e ".[rag]"`，可选）或某个库的索引没建，miniCC 也照常启动，工具返回一句提示文本交给 LLM，而不是抛异常打断主循环。**按库懒建**：某个库首次被检索且索引不存在时才构建（实测 303 页的书 757 chunks 约 2 分钟、519 页的书 1095 chunks 约 3 分钟，耗时随篇幅增长），不会启动时把全部 PDF 建一遍；判断依据是 `index.faiss` 是否存在而非目录是否存在（构建中途失败留下的空目录不会造成「已建好」的假象）。索引在 `rag/rag_index/<库名>/`，是纯本机产物，已在 `.gitignore` 排除 |
 
 ## 系统设计
 
@@ -62,7 +62,7 @@ agent_loop(state, registry, context_manager, memory_manager)        ◀── �
 | `agent/` | 智能体层 | `agent.py` 主循环（含 30 次循环上限，`verbose` / `permission_mode` 两个开关供子 Agent 复用同一套循环）；`session.py` AgentState 会话状态与持久化；`context.py` token 用量跟踪与上下文压缩；`memory.py` 跨会话长期记忆；`skill.py` SKILL.md 发现与内置技能安装；`system_prompt.py` 行为约束（先理解再修改 / 优先获取真实信息 / 控制工具调用 / 子 Agent 委派准则等中文工作准则）+ CC.md（全局/项目级）加载 |
 | `commands/` | 命令层 | 斜杠命令与 `!` Shell 直通，与正常对话分流 |
 | `llm/` | LLM 客户端 | OpenAI 兼容 SDK 封装，`tools` 参数可选传递 |
-| `rag/` | 检索层（可选） | `knowledge_base.py`：读 `static/rag_files/knowledge_bases.json` 库清单（读坏/缺失时安全返回空字典，**绝不抛异常**——它在启动时被导入）、按库名解析 PDF 与索引路径、库名 NFKC + 大小写归一化、生成给 LLM 看的库列表；`build_index.py`：`build_index(kb)` 把一个库的 PDF 切分向量化存到 `rag/rag_index/<库名>/` 并返回向量库（可 `python -m rag.build_index` 建全部库）；`retriever.py`：`get_retriever(kb)` 按库名缓存、索引缺失时补建。重型依赖（langchain / faiss / torch）全部在函数内 import，模块可被安全导入 |
+| `rag/` | 检索层（可选） | `knowledge_base.py`：读 `static/rag_files/knowledge_bases.json` 库清单（读坏/缺失时安全返回空字典，**绝不抛异常**——它在启动时被导入）、按库名解析 PDF 与索引路径、库名 NFKC + 大小写归一化、生成给 LLM 看的库列表；`build_index.py`：`build_index(kb)` 把一个库的 PDF 切分向量化存到 `rag/rag_index/<库名>/` 并返回向量库（可 `python -m rag.build_index` 建全部库）；`retriever.py`：`get_retriever(kb)` 按库名缓存、索引缺失时补建，返回稠密 + BM25 的混合检索器（`EnsembleRetriever` 做 RRF 融合，外面包一层薄包装截断到 `TOP_K=8`）。重型依赖（langchain / faiss / torch / jieba）全部在函数内 import，模块可被安全导入 |
 
 ### 关键设计决策
 
@@ -75,6 +75,10 @@ agent_loop(state, registry, context_manager, memory_manager)        ◀── �
 7. **`state.messages` 引用保持稳定（clear + extend）**：该列表被 REPL、agent 主循环、命令层共享持有，一旦重绑定（`state.messages = [...]`），其它持有者仍在操作旧列表，出现「用户输入加不进去」等分叉 bug——`/resume` 恢复会话与 compact 压缩上下文因此统一改为 `clear() + extend()` 原地更新，并由 `tests/test_resume.py` 回归测试锁定该行为。
 8. **知识库清单写进 `rag_search` 的 description，而不是单开一个「列出知识库」的工具**：库名是 `kb` 参数的合法取值，本就属于工具契约的一部分——写进 description 后模型开局就知道有哪些库可选，省掉一次「先发现再调用」的往返；更重要的是避免了模型**不去查列表、直接瞎猜库名**导致的参数错误重试（那比多一跳更贵）。这与 `load_skill` 把技能列表拼进 description 是同一套做法，风格一致。代价是库很多时 description 会膨胀，且新增库需重启才被模型看到；当前是个位数知识库，代价可忽略。
 9. **子 Agent = 复用同一套 `agent_loop` + 两个开关，隔离靠「新建对象」而非「共享状态」**：子 Agent 不另写一套循环，而是在 `run_one_subagent` 里复用 `agent_loop` 并传 `verbose=False`（静默）、`permission_mode="auto"`（跳过逐次询问）、子 Agent 专用提示词、`memory_manager=None`（不碰长期记忆）；隔离性来自每个子任务各自新建 `AgentState` 与 `ContextManager`，父会话的 `messages` 不被写入。**禁止嵌套**以代码为准：`create_subagent_registry` 按名字过滤掉 `run_subagent` 构造子注册表。注册表在装配时把 `model` / `cwd` 注入工具闭包（`tools_setup(model, cwd)`，注意传的是 `MODELS` 的 key 而不是 `ModelConfig.name`），所以会话中途 `/model` 切换不会改变本次启动创建的子 Agent 工具。并发上限取 4：`call_llm` 每次新建 client、本身线程安全，真正瓶颈在**账号侧的并发额度**（实测 kimi 侧并发为 1，任务多时会返回 429，错误只落在该子任务上）。
+
+10. **混合检索 = 稠密 + BM25，RRF 融合后截断回原来的条数**：`EnsembleRetriever` 返回的是两路并集（最多 16 条），外面包一层薄包装截断到 `TOP_K=8` —— 目的是让**给模型的上下文量保持不变**，这样效果变化才能归因于混合检索本身，而不是"同时多给了资料"（两个变量一起动就无法判断）。权重取相等（0.5/0.5），因为**没有评测集时调权重就是猜**。要承认 RRF 的固有局限：**只看排名、不看分数**，某一路给出的低质量结果一样会被等权计入。BM25 的语料直接取自 FAISS 已存的 docstore，不额外落一份稀疏索引——避免两份索引不同步；代价是依赖 langchain 的私有属性 `docstore._dict`，由 `tests/test_rag.py::TestDocstoreIsReusable` 用一次真实的 `save_local`/`load_local` 往返钉住，上游若改结构会**明确失败**，而不是静默让 BM25 拿到空列表（那种退化不报错，属于最难发现的一类）。**注意本次没有验证检索质量变好**：验证到的是「链路正确、恰好 8 条、无重复、两路都真的跑了」；要判断质量必须建评测集，而目前没有。
+
+11. **嵌入跑在 GPU 上、FAISS 留在 CPU 上——这是一次刻意分工，不是配置遗漏**：`HuggingFaceEmbeddings` 不传 `device`，底层 `SentenceTransformer(device=None)` 的语义是**自动探测**（有 CUDA 就用，否则回退 CPU），所以 `build_index` / `retriever` 里的嵌入**不需要显式开 GPU**，代码里也完全看不出这一点（实测 757 个 chunk：GPU **1.4 秒** vs CPU **15.2 秒**，约 11 倍；这要求 torch 是 CUDA 版，CPU 版 torch 下自动探测会走 CPU）。而 FAISS 侧刻意留在 CPU：装的是 `faiss-cpu`，实测 757 个向量建索引 **< 1 毫秒**、单次检索 **0.033 毫秒**——这个量级上 GPU 化的收益远小于 CUDA 上下文初始化与数据传输开销，何况 Windows 上并没有 `faiss-gpu` 的 pip 包（`pip index versions faiss-gpu` 直接找不到）。代价是**设备选择完全是隐式的**：CUDA 不可用时静默回退 CPU，代码和输出都不反映。另外，建索引与查询用不同设备**不影响检索结果**——实测同一文本 CPU/GPU 向量最大差 1e-7 量级，三条查询的检索结果顺序完全一致。
 
 ### 目录结构
 
@@ -97,7 +101,7 @@ miniCC/
 ├── rag/                     # 知识库检索（可选依赖，见 pyproject 的 [rag] extra）
 │   ├── knowledge_base.py    #   库清单读取 + 路径解析 + 库名归一化 + 生成库列表
 │   ├── build_index.py       #   build_index(kb)：PDF → 切分 → embedding → FAISS（可 python -m 建全部）
-│   └── retriever.py         #   get_retriever(kb)：按库缓存的懒加载，索引缺失时自动补建
+│   └── retriever.py         #   get_retriever(kb)：按库缓存的懒加载；稠密+BM25 混合检索（RRF 融合后截断到 8）
 ├── static/
 │   ├── rag_files/           # knowledge_bases.json（库清单，入库）+ 原始 PDF（已 gitignore）
 │   └── skills/              # 内置技能（首次启动自动复制到 ~/.miniCC/skills/）
@@ -164,4 +168,4 @@ miniCC
 
 ## 技术栈
 
-Python 3.10+（dataclass / typing）、OpenAI Python SDK（function calling）、官方 mcp SDK（MCP 客户端）、Tavily Search API、PyYAML、unittest；**可选** RAG 栈：LangChain（社区包 / HuggingFace / PyMuPDF4LLM / text-splitters）、FAISS、`BAAI/bge-small-zh-v1.5`（经 sentence-transformers）；setuptools 打包（`pyproject.toml` → `miniCC` 命令，RAG 相关依赖放在 `[rag]` extra）；配置全部经 `.env` 注入，不硬编码密钥。
+Python 3.10+（dataclass / typing）、OpenAI Python SDK（function calling）、官方 mcp SDK（MCP 客户端）、Tavily Search API、PyYAML、unittest；**可选** RAG 栈：LangChain（社区包 / HuggingFace / PyMuPDF4LLM / text-splitters）、FAISS、`BAAI/bge-small-zh-v1.5`（经 sentence-transformers）、BM25（`rank-bm25`）+ `jieba` 分词；setuptools 打包（`pyproject.toml` → `miniCC` 命令，RAG 相关依赖放在 `[rag]` extra）；配置全部经 `.env` 注入，不硬编码密钥。
