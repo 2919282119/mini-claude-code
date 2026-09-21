@@ -2,7 +2,7 @@
 
 一个纯 Python 从零实现的 AI 编程助手（CLI），模仿 **Claude Code** 的核心工作方式：用户以自然语言下达编程任务，Agent 通过 **ReAct 循环**（Reason → Act → Observe）自主地读代码、改代码、跑命令、查资料，直到完成任务，并在写文件、执行命令等敏感操作前向用户请求授权。
 
-- 纯 Python 实现，无 Web 框架，核心代码约 2700 行（43 个源文件，不含测试）
+- 纯 Python 实现，无 Web 框架，核心代码约 2900 行（57 个源文件，不含测试）
 - LLM 通过 OpenAI 兼容接口调用；内置**多模型映射**（`llm/model.py`），每个模型绑定各自的 API Key / BaseURL 环境变量与上下文窗口，`/model` 可在运行时切换
 - 已打包为可安装 CLI（`pyproject.toml`）：`pip install -e .` 后，任意目录下执行 `miniCC` 即可启动
 - 项目目录：`tools/`、`agent/`、`commands/`、`llm/`、`rag/`、`cli/` 分层解耦，各模块可独立替换
@@ -60,7 +60,7 @@ agent_loop(state, registry, context_manager, memory_manager)        ◀── �
 | --- | --- | --- |
 | `tools/` | 工具层 | `Tool` 声明式定义 + `tool_registry` 注册表 + `permission` 权限检查；`local/`（本地实现，其中 `usual/run_subagent.py` 是子 Agent 工具，以工厂闭包持有注册表与 model/cwd）与 `mcp/`（MCP 接入，含远程 HTTP 与本地 stdio 两种传输）最终都包装成 `Tool` 注册进同一注册表——新增工具 = 一个 `Tool(...)` 声明，无需改动 agent 主循环 |
 | `agent/` | 智能体层 | `agent.py` 主循环（含 30 次循环上限，`verbose` / `permission_mode` 两个开关供子 Agent 复用同一套循环）；`session.py` AgentState 会话状态与持久化；`context.py` token 用量跟踪与上下文压缩；`memory.py` 跨会话长期记忆；`skill.py` SKILL.md 发现与内置技能安装；`system_prompt.py` 行为约束（先理解再修改 / 优先获取真实信息 / 控制工具调用 / 子 Agent 委派准则等中文工作准则）+ CC.md（全局/项目级）加载 |
-| `commands/` | 命令层 | 斜杠命令与 `!` Shell 直通，与正常对话分流 |
+| `commands/` | 命令层 | `handle_command.py` 只做分流：`!` 走 Shell 直通、`/` 走斜杠命令、其余返回 `False` 交回对话循环；`slash/` 下**一个斜杠命令一个模块**，都暴露同一签名 `run(parts, state, session_manager, context_manager, memory_manager)`，`slash/__init__.py` 保留 if-chain 分发（新增命令 = 新建文件 + 加一个 `if`，不必改其它命令） |
 | `llm/` | LLM 客户端 | OpenAI 兼容 SDK 封装，`tools` 参数可选传递 |
 | `rag/` | 检索层（可选） | `knowledge_base.py`：读 `static/rag_files/knowledge_bases.json` 库清单（读坏/缺失时安全返回空字典，**绝不抛异常**——它在启动时被导入）、按库名解析 PDF 与索引路径、库名 NFKC + 大小写归一化、生成给 LLM 看的库列表；`build_index.py`：`build_index(kb)` 把一个库的 PDF 切分向量化存到 `rag/rag_index/<库名>/` 并返回向量库（可 `python -m rag.build_index` 建全部库）；`retriever.py`：`get_retriever(kb)` 按库名缓存、索引缺失时补建，返回稠密 + BM25 的混合检索器（`EnsembleRetriever` 做 RRF 融合，外面包一层薄包装截断到 `TOP_K=8`）。重型依赖（langchain / faiss / torch / jieba）全部在函数内 import，模块可被安全导入 |
 
@@ -93,7 +93,14 @@ miniCC/
 │   ├── memory.py            # MemoryManager：跨会话长期记忆（~/.miniCC/memory.json）
 │   ├── skill.py             # SkillManager：技能发现 + 内置技能安装到全局
 │   └── system_prompt.py     # Agent 行为准则 + CC.md（全局/项目级）加载
-├── commands/handle_command.py   # 斜杠命令 + ! Shell 直通 + /model 切换 + /mcp 管理 + /btw 旁路问答
+├── commands/
+│   ├── handle_command.py    # 分流：! → Shell 直通，/ → 斜杠命令，其余返回 False 走对话
+│   ├── shell_command.py     # ! 前缀的 Shell 直通
+│   └── slash/               # 斜杠命令：一个命令一个模块，统一 run(parts, state, session_manager, context_manager, memory_manager)
+│       ├── __init__.py      #   if-chain 分发，入口 handle_slash_command
+│       ├── help.py / clear.py / rename.py / resume.py / compact.py / btw.py
+│       ├── memory.py / model.py / context.py / skills.py
+│       └── mcp.py           #   /mcp 增删查（确定性合并，不丢已有配置）
 ├── llm/
 │   ├── model.py             # 模型映射表（模型名 / API Key 与 BaseURL 的 env 变量名 / 上下文窗口）
 │   └── call_llm.py          # OpenAI 兼容调用（按 ModelConfig 读取对应环境变量）

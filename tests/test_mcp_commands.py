@@ -4,7 +4,7 @@ import unittest
 from pathlib import Path
 from unittest import mock
 
-from commands.handle_command import handle_mcp_command
+from commands.slash.mcp import handle_mcp_command
 
 
 class TestMCPCommand(unittest.TestCase):
