@@ -1,5 +1,5 @@
+from rag.embeddings import get_embeddings
 from rag.knowledge_base import (
-    EMBEDDING_MODEL,
     KNOWLEDGE_BASES,
     index_dir,
     pdf_path,
@@ -16,7 +16,6 @@ def build_index(kb):
     from langchain_pymupdf4llm import PyMuPDF4LLMLoader
     from langchain_text_splitters import RecursiveCharacterTextSplitter
     from langchain_community.vectorstores import FAISS
-    from langchain_huggingface import HuggingFaceEmbeddings
 
     documents = PyMuPDF4LLMLoader(pdf_path(kb)).load()
 
@@ -25,13 +24,11 @@ def build_index(kb):
         chunk_overlap=200,
     ).split_documents(documents)
 
-    embeddings = HuggingFaceEmbeddings(
-        model_name=EMBEDDING_MODEL
-    )
-
+    # 共用进程内的 embedding 单例：返回的向量库会持有它，每库各建一份的话
+    # 常驻内存就随知识库数量线性增长
     vectorstore = FAISS.from_documents(
         chunks,
-        embeddings
+        get_embeddings()
     )
 
     target = index_dir(kb)
