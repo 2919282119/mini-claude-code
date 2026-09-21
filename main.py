@@ -32,7 +32,13 @@ def main():
     print_banner(model_config.name)
 
     while True:
-        user_input = input("\n> ")
+        try:
+            user_input = input("\n> ")
+        except EOFError:
+            # stdin 读完就退出：管道喂完、输入被重定向（miniCC < 文件）、
+            # Windows 下 Ctrl-Z+回车 都会走到这里。不处理的话会抛裸 traceback。
+            print()
+            break
 
         if user_input.lower() in ["exit", "quit"]:
             break
