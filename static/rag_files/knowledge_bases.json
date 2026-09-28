@@ -1,10 +1,10 @@
 {
   "ai-agents-in-depth": {
     "file": "AI-Agents-in-Depth.pdf",
-    "description": "《深入理解 AI Agent：设计原理与工程实践》（李博杰）：Agent 的架构与设计原理、agentic 工作流、工具调用、记忆、推理与工程实践"
+    "description": "《深入理解 AI Agent：设计原理与工程实践》（李博杰）：AI Agent、智能体、Agent 架构、Agent 系统设计、Agentic Workflow、Agentic RAG、ReAct、推理、规划（Planning）、工具调用（Tool Calling）、Function Calling、Tool Use、记忆（Memory）、上下文管理（Context Management）、上下文工程（Context Engineering）、Reflection、Self-Evolving Agent、自我进化、多 Agent（Multi-Agent）、Sub-Agent、Agent 协作、任务分解、长程任务、Agent Evaluation、Agent Harness、Skills、MCP、工作流编排、Agent 工程实践。"
   },
-  "AI-Infra-Book":{
+  "AI-Infra-Book": {
     "file": "AI-Infra-Book.pdf",
-    "description": "《深入理解 AI Infra：量化分析与系统设计》（李博杰 著）开源书稿：从硬件约束和模型架构出发，量化推导 LLM 推理与训练系统设计。"
+    "description": "《深入理解 AI Infra：量化分析与系统设计》（李博杰 著）：AI Infra、大模型基础设施、LLM、Transformer、模型架构、模型推理、模型训练、推理系统、训练系统、硬件约束、GPU、CUDA、计算能力、显存、内存、带宽、算力、通信、并行计算、数据并行、模型并行、流水线并行、张量并行、分布式训练、分布式推理、量化分析、模型量化、KV Cache、Attention、Prefill、Decode、Batching、推理性能、吞吐量（Throughput）、延迟（Latency）、显存占用、计算复杂度、系统设计与性能优化。"
   }
 }

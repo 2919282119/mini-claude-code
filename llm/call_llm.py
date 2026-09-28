@@ -9,7 +9,8 @@ load_dotenv()
 def call_llm(
         config:ModelConfig,
         messages,
-        tools=None
+        tools=None,
+        temperature: float = 0.1
 ):
     client = OpenAI(
         api_key=os.environ[config.api_key_env],
@@ -18,7 +19,7 @@ def call_llm(
     kwargs = {
         "model": config.name,
         "messages": messages,
-        "temperature": 1,
+        "temperature": temperature
     }
 
     if tools:

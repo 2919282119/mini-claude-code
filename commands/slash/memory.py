@@ -2,7 +2,7 @@ from agent.context import ContextManager
 from agent.memory import MemoryManager
 from agent.session import AgentState, SessionManager
 
-
+# TODO:目前memory还是手动添加的，应该做成由llm来决定是否添加
 def run(parts: list[str], state: AgentState,
         session_manager: SessionManager,
         context_manager: ContextManager,

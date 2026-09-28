@@ -8,7 +8,7 @@ def run(parts: list[str], state: AgentState,
         session_manager: SessionManager,
         context_manager: ContextManager,
         memory_manager: MemoryManager) -> bool:
-    # TODO:最好在安装完或者手动移入skill之后就能更新skills
+    # FIXME:最好在安装完或者手动移入skill之后就能更新skills
     skill_manager.discover()
     skills = skill_manager.skills
 

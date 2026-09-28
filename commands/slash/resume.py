@@ -76,7 +76,7 @@ def run(parts: list[str], state: AgentState,
     # 更新当前 state
     state.session_id = new_state.session_id
     state.name = new_state.name
-    # TODO:这种写法有问题，直接把messages的引用给改掉了导致user_prompt加不进去
+    # NOTE:这种写法有问题，直接把messages的引用给改掉了导致user_prompt加不进去
     # state.messages = new_state.messages
 
     state.messages.clear()

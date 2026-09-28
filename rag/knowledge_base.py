@@ -20,6 +20,7 @@ def _load_manifest():
     整个程序起不来。
     """
     try:
+        # NOTE: knowledge_bases.json中每个pdf的desc要尽可能多包含相关的关键词不然不会检索该知识库
         with MANIFEST_PATH.open("r", encoding="utf-8") as f:
             data = json.load(f)
 
