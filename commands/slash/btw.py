@@ -1,4 +1,5 @@
 from agent.context import ContextManager
+from agent.interrupt import run_interruptibly
 from agent.memory import MemoryManager
 from agent.session import AgentState, SessionManager
 from llm.call_llm import call_llm
@@ -38,6 +39,6 @@ def btw(question, state):
         }
     ]
     model_config = MODELS[state.model]
-    response = call_llm(model_config,messages)
+    response = run_interruptibly(call_llm, model_config, messages)
 
     return response.choices[0].message.content

@@ -32,6 +32,28 @@ class TestBashTimeout(unittest.TestCase):
         self.assertEqual(result["returncode"], -1)
         self.assertIn("超时", result["output"])
 
+    def test_keyboard_interrupt_kills_process_tree_then_reraises(self):
+        """回归：Ctrl+C 中断时 communicate 会抛 KeyboardInterrupt 却**不会**动子进程，
+        不管的话命令会留在后台继续跑（实测 cmd.exe 及其子进程 PID 原封不动）。
+        必须复用整树击杀，然后原样重抛，交给 agent 循环做中断收尾。"""
+        with mock.patch(
+            "tools.local.builtin.bash.subprocess.Popen"
+        ) as mock_popen, mock.patch(
+            "tools.local.builtin.bash.subprocess.run"
+        ) as mock_run:
+            proc = mock_popen.return_value
+            proc.pid = 5678
+            proc.communicate.side_effect = KeyboardInterrupt
+
+            with self.assertRaises(KeyboardInterrupt):
+                bash("long command")
+
+        mock_run.assert_called_once()
+        taskkill_args = mock_run.call_args[0][0]
+        self.assertEqual(taskkill_args[:3], ["taskkill", "/F", "/T"])
+        self.assertEqual(taskkill_args[-1], "5678")
+        proc.wait.assert_called_once()
+
     def test_normal_command_returns_output(self):
         with mock.patch(
             "tools.local.builtin.bash.subprocess.Popen"

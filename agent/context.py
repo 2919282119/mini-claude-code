@@ -1,3 +1,4 @@
+from agent.interrupt import run_interruptibly
 from agent.session import AgentState
 from llm.call_llm import call_llm
 from llm.model import MODELS
@@ -56,7 +57,10 @@ class ContextManager:
             *old_messages
         ]
         model_config=MODELS[state.model]
-        response = call_llm(model_config,summary_messages)
+        # 压缩要花几十秒；直接在主线程发的话，期间按 Ctrl+C 会被压到这次请求结束
+        # （见 agent/interrupt.py 里第 2 条）。自动压缩是在用户不知情时触发的，尤其
+        # 不能压着不响应。
+        response = run_interruptibly(call_llm, model_config, summary_messages)
 
         # 更新最近一次 LLM 请求的 token 使用量
         self.update(response)

@@ -5,6 +5,7 @@ from concurrent.futures import ThreadPoolExecutor, as_completed
 from uuid import uuid4
 
 from agent.agent import agent_loop
+from agent.interrupt import is_interrupted
 from agent.context import ContextManager
 from agent.session import AgentState
 from agent.system_prompt import SYSTEM_PROMPT
@@ -89,6 +90,10 @@ def run_one_subagent(
         permission_mode="auto"
     )
 
+    if result is None and is_interrupted():
+        # 中断时 agent_loop 也返回 None，和「达到最大循环次数」得靠标志区分
+        result = "已被用户中断，未产生结论"
+
     return {
         "task": task,
         # agent_loop 达到最大循环次数时会返回 None
@@ -123,10 +128,12 @@ def run_subagent(
     print(f"🚀 启动 {len(tasks)} 个 SubAgent（并行，上限 {MAX_SUBAGENT_COUNT}）")
     start = time.time()
 
-    with ThreadPoolExecutor(
-        max_workers=max_workers
-    ) as executor:
+    # 不用 `with ThreadPoolExecutor(...)`：它退出时会 shutdown(wait=True)，一直等到
+    # 所有子 Agent 跑完，Ctrl+C 看起来就像卡死。这里显式创建、不等待地关闭。
+    executor = ThreadPoolExecutor(max_workers=max_workers)
+    interrupted = False
 
+    try:
         future_map = {
             executor.submit(
                 run_one_subagent,
@@ -150,8 +157,23 @@ def run_subagent(
                     "error": f"SubAgent执行失败: {e}",
                 }
 
+    except KeyboardInterrupt:
+        # 子 Agent 收不到这个信号（信号只投递给主线程），只能靠中断标志在自己的
+        # 下一个轮边界停下；还在跑的那一轮不等待，没拿到结果的任务直接标为已中断
+        interrupted = True
+
+    finally:
+        executor.shutdown(wait=False, cancel_futures=True)
+
+    for index, task in enumerate(tasks):
+        if results[index] is None:
+            results[index] = {"task": task, "error": "已中断"}
+
     # 子 Agent 执行过程静默，结束后统一汇总
-    print(f"✅ SubAgent 完成 {len(tasks)} 个任务（{time.time() - start:.1f}s）")
+    if interrupted:
+        print(f"⏹ SubAgent 已中断（{time.time() - start:.1f}s）")
+    else:
+        print(f"✅ SubAgent 完成 {len(tasks)} 个任务（{time.time() - start:.1f}s）")
     for index, item in enumerate(results, 1):
         text = item.get("result") or item.get("error") or ""
         print(f"  [{index}] {_short(item['task'], 60)} → {_short(text, 200)}")

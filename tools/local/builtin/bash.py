@@ -3,6 +3,20 @@ import subprocess
 from tools.Tool import Tool
 
 
+def _kill_process_tree(process):
+    """杀掉整棵进程树并等它退干净。
+
+    shell=True 下命令可能派生出孙进程（如 npm run dev 下的 node），只杀直接子进程
+    不足以关闭管道写端，communicate() 会永远等不到 EOF，导致整个进程卡死；
+    必须用 taskkill /T 杀整棵树。
+    """
+    subprocess.run(
+        ["taskkill", "/F", "/T", "/PID", str(process.pid)],
+        capture_output=True,
+    )
+    process.wait()
+
+
 def bash(command, background=False):
     """
     执行 Shell 命令。
@@ -41,19 +55,19 @@ def bash(command, background=False):
         try:
             stdout, stderr = process.communicate(timeout=30)
         except subprocess.TimeoutExpired:
-            # shell=True 下命令可能派生出孙进程（如 npm run dev 下的 node），
-            # 只杀直接子进程不足以关闭管道写端，communicate() 会永远等不到 EOF，
-            # 导致整个进程卡死；必须用 taskkill /T 杀整棵进程树
-            subprocess.run(
-                ["taskkill", "/F", "/T", "/PID", str(process.pid)],
-                capture_output=True,
-            )
-            process.wait()
+            _kill_process_tree(process)
 
             return {
                 "returncode": -1,
                 "output": "命令执行超时（30秒）"
             }
+        except KeyboardInterrupt:
+            # 用户 Ctrl+C 中断 agent：communicate 会把 KeyboardInterrupt 抛出去，
+            # 但**不会**动那个子进程——不管的话命令会留在后台继续跑（实测 cmd.exe
+            # 和它的子进程 PID 原封不动）。这里复用超时那条路的整树击杀，再原样
+            # 重抛，交给 agent 循环去做中断收尾。
+            _kill_process_tree(process)
+            raise
 
         output = stdout
 
