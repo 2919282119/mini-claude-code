@@ -28,7 +28,7 @@ def main():
     context_manager = ContextManager(model_config.context_window)
 
     # 工具的注册和初始化不应该放在agent里面，而是放在app层
-    registry = tools_setup(state.model,cwd)
+    registry = tools_setup(state.model,cwd,memory_manager)
 
     print_banner(model_config.name)
 

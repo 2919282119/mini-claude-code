@@ -13,6 +13,7 @@ SYSTEM_PROMPT = """
 - glob：按通配符查找文件（如 **/*.py）
 - load_skill：加载技能（SKILL.md）
 - run_subagent：并行派发子 Agent 执行相互独立的自包含任务（子 Agent 不能再派生）
+- save_memory：把值得跨会话记住的信息写入长期记忆
 工作原则：
 1. 先理解，再修改
 - 修改代码前，先读取与任务直接相关的代码。

@@ -2,7 +2,7 @@
 
 一个纯 Python 从零实现的 AI 编程助手（CLI），模仿 **Claude Code** 的核心工作方式：用户以自然语言下达编程任务，Agent 通过 **ReAct 循环**（Reason → Act → Observe）自主地读代码、改代码、跑命令、查资料，直到完成任务，并在写文件、执行命令等敏感操作前向用户请求授权。
 
-- 纯 Python 实现，无 Web 框架，核心代码约 2900 行（57 个源文件，不含测试）
+- 纯 Python 实现，无 Web 框架，核心代码约 3300 行（58 个源文件，不含测试）
 - LLM 通过 OpenAI 兼容接口调用；内置**多模型映射**（`llm/model.py`），每个模型绑定各自的 API Key / BaseURL 环境变量与上下文窗口，`/model` 可在运行时切换
 - 已打包为可安装 CLI（`pyproject.toml`）：`pip install -e .` 后，任意目录下执行 `miniCC` 即可启动
 - 项目目录：`tools/`、`agent/`、`commands/`、`llm/`、`rag/`、`cli/` 分层解耦，各模块可独立替换
@@ -12,7 +12,7 @@
 | 能力 | 说明 |
 | --- | --- |
 | ReAct Agent 循环 | `agent_loop` 反复执行「组装上下文 → 调用 LLM → 若请求工具则执行并回填结果 → 再调用」，直到 LLM 给出最终答复；对话中每步都打印工具调用与参数，过程可观测；单轮任务最多循环 30 次（`MAX_LOOP_CNT`），超过即停止并提示，避免工具调用失控陷入无限循环；工具参数错误或执行异常**不会中断进程**，错误信息作为工具结果回填，由 LLM 自行纠正重试 |
-| 工具系统 | 8 个基础工具：`read_file` / `write_file` / `edit_file` / `grep` / `glob`（按通配符查找文件） / `bash` / `list_dir` / `search_web`（联网搜索），外加 `load_skill` / `run_subagent`（子 Agent） / `rag_search`（知识库检索，按库名选库），共 11 个；`bash` 支持 `background=true` 后台启动长期服务（如 dev server，stdin/out/err 全部隔离），前台命令 30s 超时后**杀整棵进程树**（防止孙进程持有管道导致永久卡死）；grep 自动跳过 `.git`/`node_modules` 等目录 |
+| 工具系统 | 8 个基础工具：`read_file` / `write_file` / `edit_file` / `grep` / `glob`（按通配符查找文件） / `bash` / `list_dir` / `search_web`（联网搜索），外加 `load_skill` / `run_subagent`（子 Agent） / `rag_search`（知识库检索，按库名选库） / `save_memory`（LLM 自动记录长期记忆），共 12 个；`bash` 支持 `background=true` 后台启动长期服务（如 dev server，stdin/out/err 全部隔离），前台命令 30s 超时后**杀整棵进程树**（防止孙进程持有管道导致永久卡死）；grep 自动跳过 `.git`/`node_modules` 等目录 |
 | 工具注册表 | `ToolRegistry`：声明式定义工具（名称/描述/参数/权限级），自动生成 OpenAI function-calling 的 JSON Schema |
 | 子 Agent 并行 | `run_subagent` 一次接收 `tasks` 列表（每项是一段**自包含**的任务描述），用 `ThreadPoolExecutor` **并行**执行，上限 `MAX_SUBAGENT_COUNT = 4`、多余任务排队，全部结束后把 `{"results": [{"task", "result"}]}` 回填给主 Agent。每个子任务各自新建 `AgentState` + `ContextManager`——**看不到主对话**、不写父会话消息、不落盘、不碰长期记忆（`memory_manager=None`）。禁止嵌套由代码保证：`create_subagent_registry` 按名字把 `run_subagent` 从子注册表里**剔除**，提示词里的约束只是辅助说明。权限**在派生时确认一次**：工具为 `EXECUTE` 级、用户看到完整任务列表后确认，子 Agent 内部以 `permission_mode="auto"` 跳过逐次询问（`check_permission` 是阻塞式 `input()`，多线程并行会抢 stdin）。子 Agent **静默执行**（`verbose=False`，不打印工具调用），结束后统一打印启动/完成行与每个任务的结果摘要；单个子任务异常只影响自己（错误写进该任务的 `error` 字段） |
 | 中断（Ctrl+C） | agent 循环执行期间按 Ctrl+C 会**优雅中断**：已经拿到的工具结果原样保留，没跑完的 `tool_call` 各补一条「用户中断了执行，该工具未运行」，**保证转录合法**——assistant 消息里每个 `tool_call` 都必须有配对的 `tool` 回复，缺一个下一次请求就会被 API 直接拒绝，那才是真的丢状态。之后回到提示符、照常落盘，`/resume` 能接着往下问。中断与「达到 30 轮上限」都让 `agent_loop` 返回 `None`，调用方靠 `is_interrupted()` 区分（所以不会打印「🤖 None」）。**子 Agent 收不到 Ctrl+C**（信号只投递给主线程），靠一个进程级中断标志停下，而那个标志**只在准备发起下一次请求之前被检查**——所以是「尽早」而不是「立即」：卡在 LLM 请求里的子 Agent 会把那次请求跑完（实测一次长请求约 80 秒），如果它返回的是工具调用，**那一轮工具也会照跑**（也就是说中断之后子 Agent 仍可能写文件、跑命令，这个副作用窗口是有意没收紧的）；`run_subagent` 也不再使用 `with ThreadPoolExecutor`（它退出时 `wait=True` 会一直等到子 Agent 全部跑完，Ctrl+C 看起来就像卡死），改为显式创建 + `shutdown(wait=False, cancel_futures=True)`，未拿到结果的任务标为「已中断」。中断落在 `bash` 正在执行时，先 `taskkill /F /T` 杀整棵进程树再重抛——否则命令会留在后台继续跑 |
@@ -23,7 +23,7 @@
 | 多模型映射 | `llm/model.py` 维护模型注册表（当前 kimi / deepseek），每条配置声明「模型名 + API Key 环境变量名 + BaseURL 环境变量名 + 上下文窗口」；默认 deepseek，`/model <name>` 运行时切换（连同上下文窗口一并更新，随会话持久化）；新增模型 = 加一条配置 + `.env` 补对应变量 |
 | 斜杠命令 | `/help` `/clear` `/rename` `/resume` `/context` `/compact` `/btw` `/memory` `/model` `/skills` `/mcp`，另有 `!` 前缀直通执行 Shell 命令 |
 | 旁路问答 `/btw` | 用「系统提示 + 当前对话历史 + 新问题」临时组装请求问 LLM，结果直接展示而**不写入**对话历史，不污染主任务上下文 |
-| 跨会话长期记忆 | `~/.miniCC/memory.json` 持久化，`/memory` 支持增删查清；每次请求动态拼进 system prompt，让 Agent 在后续会话中记得用户偏好与约定 |
+| 跨会话长期记忆 | `~/.miniCC/memory.json` 持久化，`/memory` 支持增删查清；每次请求动态拼进 system prompt，让 Agent 在后续会话中记得用户偏好与约定。LLM 可在对话中调用 `save_memory` 工具自动记录（静默写入，内容重复时不重复写；该工具对子 Agent 不可见——`MemoryManager.add` 无锁，并行写会互相覆盖） |
 | 项目指令文件 CC.md | 两级指令加载：全局 `~/.miniCC/CC.md` + 当前项目 `./CC.md`，每次请求动态读取追加到系统提示词（分别标注 `# Global Instructions` / `# Project Instructions`），用于固化跨项目的个人偏好与项目级约定（相当于 Claude Code 的 CLAUDE.md） |
 | Skills 技能系统 | 以 Claude Code 的 `SKILL.md`（YAML frontmatter + Markdown）为规范，从全局目录 `~/.miniCC/skills/<name>/SKILL.md` 自动发现；采用**渐进式披露**——仅把「技能名 + 一句话描述」做成 `load_skill` 工具的 description 暴露给模型，由模型按需调用加载完整内容，避免上下文无谓膨胀；自带内置技能（如 `find-skills`），首次启动时自动复制到全局技能目录（已存在则不覆盖），`/skills` 可列出全部可用技能 |
 | RAG 知识库检索（可选） | `rag_search(kb, query)` 对本地 PDF 知识库做**混合召回 + cross-encoder 精排**——**一个 PDF 一个库**，库清单写在 `static/rag_files/knowledge_bases.json`（库名 → PDF 文件名 + 一句话描述，描述手写）。库列表在装配时拼进 `rag_search` 的 description（同 `load_skill` 的做法），模型一开始就知道有哪些库可选、不必多一次往返去发现；库名匹配做了 NFKC + 大小写归一化（中文输入法的全角字符也能对上），对不上则返回「知识库不存在 + 可用列表」让模型自纠。检索分两段：**先召回、再精排**。召回是混合检索——稠密路（FAISS + bge 向量，`k=20`）与稀疏路（BM25，`k=20`，jieba 分词）交给 `EnsembleRetriever` 做 RRF 融合，返回按 `page_content` 去重的并集（≤40 条）；精排把这不超过 40 条候选交给 cross-encoder `BAAI/bge-reranker-v2-m3` 逐对打分，**取分数最高的 8 条**给模型。**截断放在精排之后**，所以给模型的上下文量与加 rerank 之前一样是 8 条——效果若变能归因到重排本身，而不是"同时多给了资料"（两个变量一起动就无法判断）。rerank 补的正是 RRF 的短板：**只看排名、不看分数**，某一路塞进来的低质量结果一样会被等权计入；cross-encoder 直接对 `(query, 正文)` 整体打分，能把这类结果压下去。条数写死而不让模型选：它看不到相似度分数、也不知道上一批够不够，猜出来的数字不如钉死的常量；嫌少时让它换个 query 再检索一次（由"返回了什么"驱动，比猜有依据）。两路权重相等，因为**没有评测集时调权重就是猜**；reranker 同理用 fp16 权重（实测 36 条候选 1.0 秒，fp32 要 3.7 秒），不显式设 `max_length`（默认取模型自己的 8192，远超 chunk 长度）。BM25 的语料直接取自 FAISS 已存的 docstore（`index.pkl` 里就带着 chunk 正文），不额外落一份稀疏索引，因而不会有两份索引不同步的问题。**为什么必须用 jieba**：`BM25Retriever` 默认按空格切词，对中文等于失效（整句变成一个 token），BM25 就只剩"整句精确匹配"一条路；jieba 还能把 `PagedAttention` 这类英文术语原样保留成一个 token，而那正是加 BM25 想捞回来的那类查询。**全链路懒加载**：langchain、embedding 模型、reranker、FAISS 索引、jieba 都在首次调用时才加载，且**缓存命中时完全不联网**（见模块表 `embeddings.py`：网络不通时实测加载照常，输出里没有任何 HEAD 重试）（reranker 是本项目最重的一次加载——模型 2.14 GB，首次检索才下载，实测 140 秒；设备显式选 `cuda`、不可用时回退 CPU，并把实际设备打印出来，不用靠猜。首次构造检索器实测合计 ~40 秒，其中 `langchain_classic` 导入约 10 秒、reranker 载入约 10 秒，其余是 embedding 与 FAISS；同进程内换第二个库约 12 秒）（首次构造混合检索器实测另有 ~10 秒，且**几乎全部来自 `langchain_classic.retrievers` 这个重模块的导入**——不是 jieba 分词、也不是 BM25 建索引：jieba 词典只占 0.3 秒，对 757 个 chunk 分词同样是亚秒级。`EnsembleRetriever` 只在 `langchain_classic` 里有，`langchain_community.retrievers` 并不导出它，所以这 10 秒省不掉；之后走进程内缓存），且这些 import 都在函数内部——因此即使 RAG 依赖没装（`pip install -e ".[rag]"`，可选）或某个库的索引没建，miniCC 也照常启动，工具返回一句提示文本交给 LLM，而不是抛异常打断主循环。**按库懒建**：某个库首次被检索且索引不存在时才构建（实测 303 页的书 757 chunks 约 2 分钟、519 页的书 1095 chunks 约 3 分钟，耗时随篇幅增长），不会启动时把全部 PDF 建一遍；判断依据是 `index.faiss` 是否存在而非目录是否存在（构建中途失败留下的空目录不会造成「已建好」的假象）。索引在 `rag/rag_index/<库名>/`，是纯本机产物，已在 `.gitignore` 排除 |
@@ -124,10 +124,10 @@ miniCC/
 │   ├── Tool.py              # 声明式工具基类（自动生成 schema）
 │   ├── tool_registry.py     # 注册表
 │   ├── permission.py        # READ/WRITE/EXECUTE 分级 + 记住授权
-│   ├── setup.py             # 工具装配（本地 + MCP + 子 Agent；入参 model/cwd 供子 Agent 继承）
+│   ├── setup.py             # 工具装配（本地 + MCP + 子 Agent；入参 model/cwd 供子 Agent 继承、memory_manager 注入 save_memory）
 │   ├── local/               # 本地工具实现
 │   │   ├── builtin/         #   bash / grep / glob / ls / read / write / edit
-│   │   └── usual/           #   search_web / load_skill / run_subagent（子 Agent） / search_rag（知识库）
+│   │   └── usual/           #   search_web / load_skill / run_subagent（子 Agent） / search_rag（知识库） / save_memory（长期记忆）
 │   └── mcp/                 # MCP 接入（基于官方 mcp SDK）
 │       ├── config.py        #   ~/.miniCC/mcp.json 读写
 │       ├── client.py        #   SDK 封装（后台线程 + asyncio 事件循环桥接）

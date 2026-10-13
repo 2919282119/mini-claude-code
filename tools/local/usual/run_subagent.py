@@ -43,13 +43,14 @@ SUBAGENT_SYSTEM_PROMPT = """
 def create_subagent_registry(registry: ToolRegistry):
     """
     创建 SubAgent 专用工具注册表。
-    禁止 SubAgent 调用 run_subagent，避免递归。
+    剔除 run_subagent（避免递归）与 save_memory（MemoryManager.add 无锁，多个
+    子 Agent 并行写会互相覆盖；子任务上下文也容易写进噪声记忆）。
     """
 
     sub_registry = ToolRegistry()
 
     for tool in registry.all():
-        if tool.name != "run_subagent":
+        if tool.name not in ("run_subagent", "save_memory"):
             sub_registry.register(tool)
 
     return sub_registry
